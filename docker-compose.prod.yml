@@ -57,8 +57,10 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     restart: unless-stopped
+    configs:
+      - source: mosquitto_config
+        target: /mosquitto/config/mosquitto.conf
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
       - mosquitto_data:/mosquitto/data
     ports:
       - "1883:1883"
@@ -126,6 +128,16 @@ services:
         condition: service_healthy
     networks:
       - letsgrow_net
+
+configs:
+  mosquitto_config:
+    content: |
+      listener 1883
+      allow_anonymous true
+
+      listener 9001
+      protocol websockets
+      allow_anonymous true
 
 volumes:
   postgres_data:
