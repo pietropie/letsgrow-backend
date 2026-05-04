@@ -13,7 +13,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start MQTT listener as background task (only if host is configured)
+    from app.services.storage import ensure_buckets
+    try:
+        ensure_buckets()
+        logger.info("MinIO buckets ok")
+    except Exception as exc:
+        logger.warning("MinIO não disponível no startup: %s", exc)
+
     mqtt_task = None
     if settings.MQTT_HOST:
         from app.workers.mqtt_listener import run_mqtt_listener
