@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+migrations/versions/*.py
+!migrations/versions/.gitkeep
