@@ -81,7 +81,6 @@ services:
       - letsgrow_net
 
   api:
-    image: ${COOLIFY_IMAGE_API:-letsgrow-api}
     build:
       context: .
       dockerfile: Dockerfile
@@ -110,7 +109,6 @@ services:
       - letsgrow_net
 
   celery:
-    image: ${COOLIFY_IMAGE_API:-letsgrow-api}
     build:
       context: .
       dockerfile: Dockerfile
