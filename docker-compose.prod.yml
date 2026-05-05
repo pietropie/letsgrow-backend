@@ -85,8 +85,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "8000:8000"
     networks:
       - letsgrow_net
 
