@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -17,9 +18,7 @@ class KnowledgeChunk(Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # pgvector column — dimension matches EMBEDDING_DIMENSIONS in config (768)
-    # Declared as a plain Column to avoid type-hint issues with Vector
-    embedding: Mapped[Any] = mapped_column(nullable=True)
+    embedding: Mapped[Any] = mapped_column(Vector(768), nullable=True)
 
     source_file: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
