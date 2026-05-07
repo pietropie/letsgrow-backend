@@ -42,6 +42,10 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class OAuthGoogleRequest(BaseModel):
+    id_token: str
+
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str

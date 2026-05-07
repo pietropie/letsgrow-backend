@@ -1,11 +1,18 @@
+import re
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
+    OAuthGoogleRequest,
     RefreshRequest,
     RegisterRequest,
     TokenResponse,
@@ -82,3 +89,65 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/google", response_model=TokenResponse)
+async def google_login(body: OAuthGoogleRequest, db: AsyncSession = Depends(get_db)):
+    if not settings.GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Google login não configurado")
+
+    try:
+        payload = google_id_token.verify_oauth2_token(
+            body.id_token,
+            google_requests.Request(),
+            settings.GOOGLE_CLIENT_ID,
+        )
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token Google inválido")
+
+    google_sub = payload["sub"]
+    email = payload.get("email", "")
+    full_name = payload.get("name")
+
+    # Find by oauth_id first, then by email
+    result = await db.execute(
+        select(User).where(User.oauth_provider == "google", User.oauth_id == google_sub)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user and email:
+        result = await db.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        if user:
+            user.oauth_provider = "google"
+            user.oauth_id = google_sub
+
+    if not user:
+        base = re.sub(r"[^a-z0-9]", "", (full_name or email.split("@")[0]).lower())[:20] or "user"
+        username = base
+        suffix = 1
+        while (await db.execute(select(User).where(User.username == username))).scalar_one_or_none():
+            username = f"{base}{suffix}"
+            suffix += 1
+
+        user = User(
+            email=email,
+            username=username,
+            full_name=full_name,
+            hashed_password=None,
+            oauth_provider="google",
+            oauth_id=google_sub,
+            is_verified=True,
+        )
+        db.add(user)
+
+    await db.commit()
+    await db.refresh(user)
+
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Conta inativa")
+
+    return TokenResponse(
+        access_token=create_access_token(user.id),
+        refresh_token=create_refresh_token(user.id),
+    )
