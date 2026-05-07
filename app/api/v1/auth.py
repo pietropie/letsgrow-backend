@@ -93,16 +93,29 @@ async def me(current_user: User = Depends(get_current_user)):
 
 @router.post("/google", response_model=TokenResponse)
 async def google_login(body: OAuthGoogleRequest, db: AsyncSession = Depends(get_db)):
-    if not settings.GOOGLE_CLIENT_ID:
+    valid_client_ids = [
+        cid for cid in [
+            settings.GOOGLE_CLIENT_ID,
+            settings.GOOGLE_ANDROID_CLIENT_ID,
+            settings.GOOGLE_IOS_CLIENT_ID,
+        ] if cid
+    ]
+    if not valid_client_ids:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Google login não configurado")
 
-    try:
-        payload = google_id_token.verify_oauth2_token(
-            body.id_token,
-            google_requests.Request(),
-            settings.GOOGLE_CLIENT_ID,
-        )
-    except Exception:
+    payload = None
+    for client_id in valid_client_ids:
+        try:
+            payload = google_id_token.verify_oauth2_token(
+                body.id_token,
+                google_requests.Request(),
+                client_id,
+            )
+            break
+        except Exception:
+            continue
+
+    if payload is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token Google inválido")
 
     google_sub = payload["sub"]

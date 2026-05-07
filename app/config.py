@@ -24,6 +24,8 @@ class Settings(BaseSettings):
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_ANDROID_CLIENT_ID: str = ""
+    GOOGLE_IOS_CLIENT_ID: str = ""
 
     # Google AI (Gemini)
     GOOGLE_API_KEY: str = ""
