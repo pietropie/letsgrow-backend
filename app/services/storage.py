@@ -14,10 +14,10 @@ _PRESIGN_EXPIRY_SECONDS = 3600  # 1h para upload, 24h para download
 def get_minio_client() -> Minio:
     settings = get_settings()
     return Minio(
-        settings.minio_endpoint,
-        access_key=settings.minio_access_key,
-        secret_key=settings.minio_secret_key,
-        secure=settings.minio_secure,
+        settings.MINIO_ENDPOINT,
+        access_key=settings.MINIO_ACCESS_KEY,
+        secret_key=settings.MINIO_SECRET_KEY,
+        secure=settings.MINIO_SECURE,
     )
 
 
