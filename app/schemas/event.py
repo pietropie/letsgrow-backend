@@ -11,6 +11,12 @@ class EventCreate(BaseModel):
     ph_in: float | None = None
     ph_out: float | None = None
     water_volume_ml: float | None = None
+    # MVP fields recommended by cultivation consultant
+    temperature_c: float | None = None
+    humidity_rh: float | None = None
+    weight_g: float | None = None
+    severity: str | None = None
+    is_flush: bool | None = None
     notes: str | None = None
     photo_keys: list[str] | None = None
 
@@ -22,6 +28,12 @@ class EventUpdate(BaseModel):
     ph_in: float | None = None
     ph_out: float | None = None
     water_volume_ml: float | None = None
+    # MVP fields recommended by cultivation consultant
+    temperature_c: float | None = None
+    humidity_rh: float | None = None
+    weight_g: float | None = None
+    severity: str | None = None
+    is_flush: bool | None = None
     notes: str | None = None
     photo_keys: list[str] | None = None
 
@@ -35,6 +47,12 @@ class EventResponse(BaseModel):
     ph_in: float | None
     ph_out: float | None
     water_volume_ml: float | None
+    # MVP fields recommended by cultivation consultant
+    temperature_c: float | None
+    humidity_rh: float | None
+    weight_g: float | None
+    severity: str | None
+    is_flush: bool | None
     notes: str | None
     photo_keys: list[str] | None
     created_at: datetime

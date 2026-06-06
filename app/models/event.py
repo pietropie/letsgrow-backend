@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,6 +31,17 @@ class GrowEvent(Base):
     ph_in: Mapped[float | None] = mapped_column(Float, nullable=True)
     ph_out: Mapped[float | None] = mapped_column(Float, nullable=True)
     water_volume_ml: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Environmental / physical measurements
+    temperature_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    humidity_rh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weight_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Problem severity — enum values: "leve", "moderado", "grave"
+    severity: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+    # Watering — True when the irrigation run contained no nutrients (plain water flush)
+    is_flush: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_keys: Mapped[list | None] = mapped_column(JSON, nullable=True)
