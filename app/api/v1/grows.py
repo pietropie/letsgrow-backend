@@ -41,12 +41,13 @@ async def list_grows(
     summaries = []
     for grow in grows:
         pot_count_result = await db.execute(
-            select(func.count()).where(Pot.grow_id == grow.id)
+            select(func.count(Pot.id)).where(Pot.grow_id == grow.id)
         )
         pot_count = pot_count_result.scalar() or 0
 
         active_plant_result = await db.execute(
-            select(func.count())
+            select(func.count(Plant.id))
+            .select_from(Plant)
             .join(Pot, Plant.pot_id == Pot.id)
             .where(Pot.grow_id == grow.id, Plant.is_active == True)
         )
