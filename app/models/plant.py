@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Date, Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,8 +14,8 @@ class Plant(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    pot_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("pots.id", ondelete="CASCADE"), nullable=False, unique=True
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     strain_name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -36,7 +36,16 @@ class Plant(Base, TimestampMixin):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    pot = relationship("Pot", back_populates="plant")
+    # Grouping label — free text, e.g. "Armário Jun/25"
+    grow_label: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+
+    # Pot / container info (optional)
+    pot_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    pot_volume_liters: Mapped[float | None] = mapped_column(Float, nullable=True)
+    substrate: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    user = relationship("User", back_populates="plants")
     events = relationship(
         "GrowEvent", back_populates="plant", cascade="all, delete-orphan", order_by="GrowEvent.event_date.desc()"
     )
+    sensor_devices = relationship("SensorDevice", back_populates="plant")

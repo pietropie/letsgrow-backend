@@ -5,8 +5,7 @@ from pydantic import BaseModel
 
 
 class DeviceRegister(BaseModel):
-    grow_id: uuid.UUID
-    pot_id: uuid.UUID | None = None
+    plant_id: uuid.UUID | None = None
     name: str
     esp32_mac: str
     sensors_config: dict = {}
@@ -14,8 +13,7 @@ class DeviceRegister(BaseModel):
 
 class DeviceResponse(BaseModel):
     id: uuid.UUID
-    grow_id: uuid.UUID
-    pot_id: uuid.UUID | None
+    plant_id: uuid.UUID | None
     name: str
     esp32_mac: str
     firmware_version: str | None

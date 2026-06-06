@@ -10,12 +10,13 @@ from app.models.user import User
 __all__ = [
     "Base",
     "User",
-    "Grow",
-    "Pot",
     "Plant",
     "GrowEvent",
     "SensorDevice",
     "SensorReading",
     "KnowledgeChunk",
     "AIConversation",
+    # Legacy — kept for Alembic migration history, not used in new code
+    "Grow",
+    "Pot",
 ]

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.event import GrowEvent
 from app.models.grow import Grow
 from app.models.plant import Plant
-from app.models.pot import Pot
 from app.models.sensor import SensorDevice, SensorReading
 
 SYSTEM_BASE = """Você é o consultor de cultivo do LetsGrow, um assistente especializado em cannabis indoor e outdoor para cultivadores brasileiros.
@@ -36,10 +35,6 @@ async def build_grow_context(db: AsyncSession, grow: Grow) -> str:
     if not grow:
         return ""
 
-    # Fetch pots and plants
-    result = await db.execute(select(Pot).where(Pot.grow_id == grow.id))
-    pots = result.scalars().all()
-
     lines = [
         f"Grow: {grow.name} ({grow.grow_type})",
         f"Status: {grow.status}",
@@ -52,20 +47,25 @@ async def build_grow_context(db: AsyncSession, grow: Grow) -> str:
     if grow.lighting_watts:
         lines.append(f"Iluminação: {grow.lighting_watts}W")
 
-    for pot in pots:
-        result = await db.execute(select(Plant).where(Plant.pot_id == pot.id))
-        plant = result.scalar_one_or_none()
-        if not plant:
-            continue
+    # Buscar plantas do usuário vinculadas ao grow_label correspondente ao nome do grow
+    result = await db.execute(
+        select(Plant)
+        .where(Plant.user_id == grow.user_id, Plant.is_active == True)
+        .order_by(Plant.created_at.desc())
+        .limit(10)
+    )
+    plants = result.scalars().all()
 
+    for plant in plants:
         phase_days = ""
         if plant.flip_date and plant.current_phase == "flower":
             phase_days = f" ({(date.today() - plant.flip_date).days} dias de floração)"
         elif plant.germination_date:
             phase_days = f" ({(date.today() - plant.germination_date).days} dias desde germinação)"
 
+        pot_info = f" | Vaso: {plant.pot_label}" if plant.pot_label else ""
         lines.append(
-            f"\nVaso {pot.label}: {plant.strain_name} | Fase: {plant.current_phase}{phase_days}"
+            f"\nPlanta: {plant.strain_name}{pot_info} | Fase: {plant.current_phase}{phase_days}"
         )
 
         # Last 3 events

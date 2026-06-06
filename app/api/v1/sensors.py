@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.grow import Grow
+from app.models.plant import Plant
 from app.models.sensor import SensorDevice, SensorReading
 from app.models.user import User
 from app.schemas.sensor import SensorReadingResponse, SensorSummary
@@ -45,8 +45,8 @@ async def _get_device_or_404(
 ) -> SensorDevice:
     result = await db.execute(
         select(SensorDevice)
-        .join(Grow, SensorDevice.grow_id == Grow.id)
-        .where(SensorDevice.id == device_id, Grow.user_id == user_id)
+        .join(Plant, SensorDevice.plant_id == Plant.id)
+        .where(SensorDevice.id == device_id, Plant.user_id == user_id)
     )
     device = result.scalar_one_or_none()
     if not device:

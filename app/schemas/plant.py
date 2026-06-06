@@ -3,15 +3,25 @@ from datetime import date, datetime
 
 from pydantic import BaseModel
 
+from app.schemas.event import EventResponse
+
 
 class PlantCreate(BaseModel):
     strain_name: str
     strain_type: str = "photo"
+    # photo | auto
     genetics: str | None = None
+    # indica | sativa | hybrid
     seed_type: str = "feminized"
+    # feminized | regular | autoflower
     germination_date: date | None = None
     current_phase: str = "germination"
+    # germination | seedling | veg | flower | harvest | done
     expected_harvest_days: int | None = None
+    grow_label: str | None = None
+    pot_label: str | None = None
+    pot_volume_liters: float | None = None
+    substrate: str | None = None
 
 
 class PlantUpdate(BaseModel):
@@ -25,11 +35,15 @@ class PlantUpdate(BaseModel):
     harvest_date: date | None = None
     expected_harvest_days: int | None = None
     is_active: bool | None = None
+    grow_label: str | None = None
+    pot_label: str | None = None
+    pot_volume_liters: float | None = None
+    substrate: str | None = None
 
 
 class PlantResponse(BaseModel):
     id: uuid.UUID
-    pot_id: uuid.UUID
+    user_id: uuid.UUID
     strain_name: str
     strain_type: str
     genetics: str | None
@@ -40,7 +54,16 @@ class PlantResponse(BaseModel):
     harvest_date: date | None
     expected_harvest_days: int | None
     is_active: bool
+    grow_label: str | None
+    pot_label: str | None
+    pot_volume_liters: float | None
+    substrate: str | None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PlantDetailResponse(PlantResponse):
+    """PlantResponse com lista de eventos embutida — usada em GET /plants/{plant_id}."""
+    events: list[EventResponse] = []

@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.grow import Grow
 from app.models.knowledge import KnowledgeChunk
 from app.models.plant import Plant
-from app.models.pot import Pot
 
 # Phase → relevance filter map
 _PHASE_FILTER = {
@@ -18,12 +17,16 @@ _PHASE_FILTER = {
 
 
 async def _get_dominant_phase(db: AsyncSession, grow: Grow | None) -> str | None:
+    """Deriva a fase dominante buscando plantas do usuário dono do grow."""
     if not grow:
         return None
+    # Após a refatoração, Plant não tem mais pot_id/grow_id direto.
+    # Usamos grow_label para tentar correlacionar, mas a forma mais confiável
+    # é buscar pela plant mais recente do usuário dono do grow.
     result = await db.execute(
         select(Plant)
-        .join(Pot)
-        .where(Pot.grow_id == grow.id, Plant.is_active == True)
+        .where(Plant.user_id == grow.user_id, Plant.is_active == True)
+        .order_by(Plant.created_at.desc())
         .limit(1)
     )
     plant = result.scalar_one_or_none()

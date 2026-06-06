@@ -14,11 +14,8 @@ class SensorDevice(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    grow_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("grows.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    pot_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("pots.id", ondelete="SET NULL"), nullable=True
+    plant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plants.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     name: Mapped[str] = mapped_column(String(60), nullable=False)
@@ -35,8 +32,7 @@ class SensorDevice(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    grow = relationship("Grow", back_populates="sensor_devices")
-    pot = relationship("Pot", back_populates="sensor_devices")
+    plant = relationship("Plant", back_populates="sensor_devices")
     readings = relationship(
         "SensorReading", back_populates="device", cascade="all, delete-orphan"
     )

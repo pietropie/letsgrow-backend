@@ -35,5 +35,5 @@ class User(Base, TimestampMixin):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    grows = relationship("Grow", back_populates="user", cascade="all, delete-orphan")
+    plants = relationship("Plant", back_populates="user", cascade="all, delete-orphan")
     conversations = relationship("AIConversation", back_populates="user", cascade="all, delete-orphan")

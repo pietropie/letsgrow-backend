@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.grow import Grow
+from app.models.plant import Plant
 from app.models.sensor import SensorDevice
 from app.models.user import User
 from app.schemas.common import MessageResponse
@@ -22,8 +22,8 @@ async def list_devices(
 ):
     result = await db.execute(
         select(SensorDevice)
-        .join(Grow, SensorDevice.grow_id == Grow.id)
-        .where(Grow.user_id == current_user.id)
+        .join(Plant, SensorDevice.plant_id == Plant.id)
+        .where(Plant.user_id == current_user.id)
         .order_by(SensorDevice.created_at.desc())
     )
     return result.scalars().all()
@@ -35,14 +35,15 @@ async def register_device(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Verify grow belongs to user
-    grow_result = await db.execute(
-        select(Grow).where(Grow.id == body.grow_id, Grow.user_id == current_user.id)
-    )
-    if not grow_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+    # Se plant_id foi fornecido, verificar que a planta pertence ao usuário
+    if body.plant_id:
+        plant_result = await db.execute(
+            select(Plant).where(Plant.id == body.plant_id, Plant.user_id == current_user.id)
+        )
+        if not plant_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Planta não encontrada")
 
-    # Check MAC uniqueness
+    # Verificar unicidade do MAC
     mac_result = await db.execute(
         select(SensorDevice).where(SensorDevice.esp32_mac == body.esp32_mac)
     )
@@ -64,8 +65,8 @@ async def get_device(
 ):
     result = await db.execute(
         select(SensorDevice)
-        .join(Grow, SensorDevice.grow_id == Grow.id)
-        .where(SensorDevice.id == device_id, Grow.user_id == current_user.id)
+        .join(Plant, SensorDevice.plant_id == Plant.id)
+        .where(SensorDevice.id == device_id, Plant.user_id == current_user.id)
     )
     device = result.scalar_one_or_none()
     if not device:
@@ -81,8 +82,8 @@ async def delete_device(
 ):
     result = await db.execute(
         select(SensorDevice)
-        .join(Grow, SensorDevice.grow_id == Grow.id)
-        .where(SensorDevice.id == device_id, Grow.user_id == current_user.id)
+        .join(Plant, SensorDevice.plant_id == Plant.id)
+        .where(SensorDevice.id == device_id, Plant.user_id == current_user.id)
     )
     device = result.scalar_one_or_none()
     if not device:
