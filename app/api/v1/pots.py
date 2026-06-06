@@ -63,7 +63,7 @@ async def create_pot(
 ):
     await _get_grow_or_404(grow_id, current_user.id, db)
 
-    count_result = await db.execute(select(func.count()).where(Pot.grow_id == grow_id))
+    count_result = await db.execute(select(func.count(Pot.id)).where(Pot.grow_id == grow_id))
     current_count = count_result.scalar() or 0
     check_pot_limit(current_user, current_count)
 

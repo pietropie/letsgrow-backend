@@ -75,7 +75,7 @@ async def create_grow(
     db: AsyncSession = Depends(get_db),
 ):
     count_result = await db.execute(
-        select(func.count()).where(Grow.user_id == current_user.id, Grow.status == "active")
+        select(func.count(Grow.id)).where(Grow.user_id == current_user.id, Grow.status == "active")
     )
     current_count = count_result.scalar() or 0
     check_grow_limit(current_user, current_count)
