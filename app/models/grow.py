@@ -35,7 +35,7 @@ class Grow(Base, TimestampMixin):
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    user = relationship("User", back_populates="grows")
+    # Legado: Grow não tem mais back_populates em User (renomeado para `plants`)
+    user = relationship("User")
     pots = relationship("Pot", back_populates="grow", cascade="all, delete-orphan", order_by="Pot.position")
-    sensor_devices = relationship("SensorDevice", back_populates="grow", cascade="all, delete-orphan")
     conversations = relationship("AIConversation", back_populates="grow")

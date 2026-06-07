@@ -23,5 +23,3 @@ class Pot(Base):
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     grow = relationship("Grow", back_populates="pots")
-    plant = relationship("Plant", back_populates="pot", uselist=False, cascade="all, delete-orphan")
-    sensor_devices = relationship("SensorDevice", back_populates="pot")
