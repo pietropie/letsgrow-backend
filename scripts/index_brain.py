@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import AsyncSessionLocal
 from app.rag.indexer import index_wiki
-from app.services.rag import get_embeddings
+from app.services.rag import get_ai_context
 
 
 async def main(wiki_path: Path, clear: bool) -> None:
@@ -29,10 +29,16 @@ async def main(wiki_path: Path, clear: bool) -> None:
     print(f"Indexando wiki em: {wiki_path}")
     print(f"Limpar existentes: {clear}")
 
-    embeddings = get_embeddings()
-
     async with AsyncSessionLocal() as db:
-        total = await index_wiki(db, wiki_path, embeddings, clear_existing=clear)
+        # Lê o provider/modelo de embedding ativo da ai_config (editável no
+        # painel admin /admin/ai-panel) — assim o script sempre usa o mesmo
+        # "espaço vetorial" do retriever em runtime.
+        config, _, embeddings = await get_ai_context(db)
+        print(
+            f"Provider de embedding: {config.embedding_provider} "
+            f"({config.embedding_model}, {config.embedding_dimensions}d)"
+        )
+        total = await index_wiki(db, wiki_path, embeddings, clear_existing=clear, ai_config=config)
 
     print(f"\n✓ {total} chunks indexados com sucesso.")
 

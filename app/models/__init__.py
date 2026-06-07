@@ -1,3 +1,4 @@
+from app.models.ai_config import AIConfig
 from app.models.base import Base
 from app.models.event import GrowEvent
 from app.models.grow import Grow
@@ -18,6 +19,7 @@ __all__ = [
     "KnowledgeChunk",
     "AIConversation",
     "Strain",
+    "AIConfig",
     # Legacy — kept for Alembic migration history, not used in new code
     "Grow",
     "Pot",

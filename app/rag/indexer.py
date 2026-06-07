@@ -12,6 +12,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import KnowledgeChunk
+from app.services import ai_provider
 
 # Tags from frontmatter that map to phase relevance
 _PHASE_TAG_MAP = {
@@ -94,7 +95,23 @@ async def index_wiki(
     wiki_path: Path,
     embeddings,
     clear_existing: bool = False,
+    ai_config: AIConfig | None = None,
 ) -> int:
+    """
+    `embeddings` é o client (LangChain) já instanciado para o provedor de
+    embedding ativo, e `ai_config` traz provider/modelo/dimensões — ambos
+    obtidos via app.services.rag.get_ai_context, que lê a config editável
+    no painel admin (/admin/ai-panel). Se `ai_config` não for passado, caímos
+    nos defaults do .env (compatibilidade com chamadas antigas/scripts).
+    """
+    if ai_config is None:
+        from app.config import settings as _settings
+        embed_provider, embed_model, embed_dims = "gemini", _settings.EMBEDDING_MODEL, _settings.EMBEDDING_DIMENSIONS
+    else:
+        embed_provider, embed_model, embed_dims = (
+            ai_config.embedding_provider, ai_config.embedding_model, ai_config.embedding_dimensions
+        )
+
     if clear_existing:
         await db.execute(
             delete(KnowledgeChunk).where(KnowledgeChunk.source_type != "user_experience")
@@ -121,7 +138,12 @@ async def index_wiki(
         if not sections:
             continue
 
-        vectors = await embeddings.aembed_documents(sections)
+        # Normaliza a chamada entre provedores (output_dimensionality no Gemini,
+        # dimensions na OpenAI, nativo nos demais) — ver app/services/ai_provider.
+        vectors = await ai_provider.embed_documents(
+            embeddings, sections,
+            provider=embed_provider, model=embed_model, dimensions=embed_dims,
+        )
 
         for section, vector in zip(sections, vectors):
             chunk = KnowledgeChunk(

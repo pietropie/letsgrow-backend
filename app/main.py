@@ -4,9 +4,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from app.api.v1.router import api_router
 from app.config import settings
+from app.web.admin_panel import AI_PANEL_HTML
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,16 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["health"])
     async def health():
         return {"status": "ok", "version": settings.APP_VERSION}
+
+    @app.get("/admin/ai-panel", response_class=HTMLResponse, tags=["admin"], include_in_schema=False)
+    async def ai_panel():
+        """
+        Painel HTML mínimo para trocar provider/modelo de IA em runtime —
+        protegido client-side pelo token enviado a /api/v1/admin/ai-config
+        (ver app/web/admin_panel.py e app/api/v1/admin.py). A própria página
+        é pública, mas sem o ADMIN_TOKEN correto nenhuma chamada à API funciona.
+        """
+        return HTMLResponse(content=AI_PANEL_HTML)
 
     return app
 

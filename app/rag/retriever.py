@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.grow import Grow
 from app.models.knowledge import KnowledgeChunk
 from app.models.plant import Plant
+from app.services import ai_provider
 
 # Phase → relevance filter map
 _PHASE_FILTER = {
@@ -39,10 +40,20 @@ async def retrieve_chunks(
     grow: Grow | None = None,
     top_k: int = 4,
 ) -> list[KnowledgeChunk]:
-    from app.services.rag import get_embeddings
+    from app.services.rag import get_ai_context
 
-    embeddings = get_embeddings()
-    query_vector = await embeddings.aembed_query(query)
+    config, _, embeddings = await get_ai_context(db)
+    # Mesmo provider/modelo/dimensões usados na indexação — essencial, pois
+    # vetores de modelos/dimensões diferentes não são comparáveis entre si
+    # (ver app/services/ai_provider.embed_query para a normalização entre
+    # provedores).
+    query_vector = await ai_provider.embed_query(
+        embeddings,
+        query,
+        provider=config.embedding_provider,
+        model=config.embedding_model,
+        dimensions=config.embedding_dimensions,
+    )
 
     phase = await _get_dominant_phase(db, grow)
     phase_tags = _PHASE_FILTER.get(phase, ["all"]) if phase else None

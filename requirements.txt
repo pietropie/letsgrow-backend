@@ -11,6 +11,12 @@ pgvector>=0.3.0
 langchain>=0.3.0
 langchain-google-genai>=2.0.0
 google-generativeai>=0.8.0
+# Provedores alternativos — habilitados pelo painel admin (/admin/ai-panel),
+# que permite trocar entre Gemini/Claude/OpenAI em runtime sem redeploy
+# (ver app/services/ai_provider.py). Mesmo sem usar, precisam estar instalados
+# para o import lazy não quebrar caso alguém selecione esses provedores.
+langchain-anthropic>=0.3.0
+langchain-openai>=0.2.0
 celery[redis]>=5.4.0
 aiomqtt>=2.0.0
 minio>=7.2.0

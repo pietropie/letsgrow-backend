@@ -30,8 +30,29 @@ class Settings(BaseSettings):
     # Google AI (Gemini)
     GOOGLE_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash-exp"
-    EMBEDDING_MODEL: str = "models/text-embedding-004"
+    # "models/text-embedding-004" foi descontinuado pela API do Gemini (404 NOT_FOUND
+    # em embedContent na v1beta) — usar "models/gemini-embedding-001", que por padrão
+    # gera vetores de 3072 dimensões. Para manter compatibilidade com a coluna
+    # pgvector existente (Vector(768)), o EMBEDDING_DIMENSIONS abaixo é repassado como
+    # `output_dimensionality` em cada chamada embed_query/embed_documents (ver
+    # app/rag/indexer.py e app/rag/retriever.py).
+    EMBEDDING_MODEL: str = "models/gemini-embedding-001"
     EMBEDDING_DIMENSIONS: int = 768
+
+    # Provedores alternativos de IA — usados pelo painel admin (/admin/ai-panel)
+    # para permitir trocar de provider em runtime, sem redeploy (ver
+    # app/services/ai_provider.py e app/models/ai_config.py). Deixe em branco
+    # se não for usar o provedor — o erro só aparece se alguém selecionar esse
+    # provider no painel sem a chave configurada.
+    ANTHROPIC_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+
+    # Token compartilhado que protege o painel admin (/admin/ai-panel) e os
+    # endpoints /api/v1/admin/*. Gere algo forte com:
+    #   python -c "import secrets; print(secrets.token_hex(32))"
+    # e configure a MESMA string aqui (.env local) e no Coolify (produção).
+    # Com string vazia, o painel fica bloqueado por padrão (nunca casa).
+    ADMIN_TOKEN: str = ""
 
     # MQTT
     MQTT_HOST: str = "localhost"
