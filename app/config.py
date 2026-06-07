@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # provider no painel sem a chave configurada.
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
+    # DeepSeek e Z.ai (GLM) expõem API compatível com a da OpenAI — usamos o
+    # mesmo client ChatOpenAI, só trocando base_url + api_key (ver ai_provider.py).
+    DEEPSEEK_API_KEY: str = ""
+    ZAI_API_KEY: str = ""
 
     # Token compartilhado que protege o painel admin (/admin/ai-panel) e os
     # endpoints /api/v1/admin/*. Gere algo forte com:

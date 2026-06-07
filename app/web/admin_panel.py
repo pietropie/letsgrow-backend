@@ -83,7 +83,7 @@ AI_PANEL_HTML = """<!DOCTYPE html>
         </div>
       </div>
       <label for="chat_model">Modelo</label>
-      <input id="chat_model" placeholder="ex.: gemini-2.5-flash, claude-haiku-4-5, gpt-5-mini" />
+      <input id="chat_model" placeholder="ex.: gemini-2.5-flash, claude-haiku-4-5, gpt-5-mini, deepseek-chat, glm-5" />
       <small>Use o nome exato do modelo conforme a documentação do provedor escolhido.</small>
     </section>
 

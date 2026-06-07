@@ -9,16 +9,26 @@ Cada provedor exige sua própria chave de API configurada no ambiente:
     GOOGLE_API_KEY     → provider "gemini"
     ANTHROPIC_API_KEY  → provider "anthropic" (somente chat)
     OPENAI_API_KEY     → provider "openai"
+    DEEPSEEK_API_KEY   → provider "deepseek" (somente chat)
+    ZAI_API_KEY        → provider "zai" (Z.ai / GLM — somente chat)
+
+DeepSeek e Z.ai não têm SDK LangChain dedicado, mas ambos expõem uma API REST
+compatível com a da OpenAI (chat completions) — então os tratamos com o mesmo
+client `ChatOpenAI`, apenas trocando `base_url` e `api_key`:
+    DeepSeek → base_url = https://api.deepseek.com        (ex.: model="deepseek-chat")
+    Z.ai     → base_url = https://api.z.ai/api/paas/v4/   (ex.: model="glm-5")
+Nenhum dos dois oferece API de embeddings de uso geral compatível — por isso
+não entram em EMBEDDING_PROVIDERS (mesma situação da Anthropic).
 
 Se a chave do provedor selecionado não estiver configurada, o erro só aparece
 na primeira chamada (lazy import + lazy client). Isso é intencional: assim o
-backend sobe normalmente mesmo que uma das três chaves esteja ausente — só
-falha quando alguém de fato tentar usar aquele provedor.
+backend sobe normalmente mesmo que uma das chaves esteja ausente — só falha
+quando alguém de fato tentar usar aquele provedor.
 """
 from app.config import settings
 
-CHAT_PROVIDERS = ("gemini", "anthropic", "openai")
-EMBEDDING_PROVIDERS = ("gemini", "openai")  # Anthropic não tem API de embeddings
+CHAT_PROVIDERS = ("gemini", "anthropic", "openai", "deepseek", "zai")
+EMBEDDING_PROVIDERS = ("gemini", "openai")  # demais provedores não têm API de embeddings utilizável aqui
 
 
 def build_llm(provider: str, model: str, temperature: float = 0.3):
@@ -52,6 +62,28 @@ def build_llm(provider: str, model: str, temperature: float = 0.3):
             temperature=temperature,
         )
 
+    if provider == "deepseek":
+        # API compatível com OpenAI — mesmo client, só muda base_url + chave.
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=model,
+            api_key=settings.DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com",
+            temperature=temperature,
+        )
+
+    if provider == "zai":
+        # Z.ai (GLM) também expõe API compatível com OpenAI.
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=model,
+            api_key=settings.ZAI_API_KEY,
+            base_url="https://api.z.ai/api/paas/v4/",
+            temperature=temperature,
+        )
+
     raise ValueError(
         f"Provedor de chat não suportado: {provider!r}. Use um de: {CHAT_PROVIDERS}"
     )
@@ -71,10 +103,11 @@ def build_embeddings(provider: str, model: str):
 
         return OpenAIEmbeddings(model=model, api_key=settings.OPENAI_API_KEY)
 
-    if provider == "anthropic":
+    if provider in ("anthropic", "deepseek", "zai"):
         raise ValueError(
-            "Anthropic não oferece API de embeddings — escolha 'gemini' ou "
-            "'openai' como provedor de embedding."
+            f"{provider!r} não oferece API de embeddings utilizável aqui — "
+            "escolha 'gemini' ou 'openai' como provedor de embedding "
+            "(o provedor de chat pode continuar sendo outro, ver AIConfig.provider vs. embedding_provider)."
         )
 
     raise ValueError(
