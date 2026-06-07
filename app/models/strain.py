@@ -34,11 +34,15 @@ class Strain(Base):
     # indica | sativa | hybrid — derivado de `dominancia` (indica/sativa/hibrida)
 
     breeder: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    thc_pct: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    cbd_pct: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Larguras ampliadas de 30 -> 120 (migration f1a2b3c4d5e6): o template de
+    # wiki/strains/ permite valores descritivos/qualificados nesses campos
+    # (ex.: "~18% (variações relatadas até a faixa alta)",
+    # "desconhecido (não confirmado na consulta à Leafly)"), que excedem 30 chars.
+    thc_pct: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    cbd_pct: Mapped[str | None] = mapped_column(String(120), nullable=True)
     dominant_terpene: Mapped[str | None] = mapped_column(String(60), nullable=True)
     flowering_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    height_cm: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    height_cm: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # corpo da seção "## Resumo", truncado a ~600 chars
