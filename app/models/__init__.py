@@ -5,6 +5,7 @@ from app.models.knowledge import AIConversation, KnowledgeChunk
 from app.models.plant import Plant
 from app.models.pot import Pot
 from app.models.sensor import SensorDevice, SensorReading
+from app.models.strain import Strain
 from app.models.user import User
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "SensorReading",
     "KnowledgeChunk",
     "AIConversation",
+    "Strain",
     # Legacy — kept for Alembic migration history, not used in new code
     "Grow",
     "Pot",

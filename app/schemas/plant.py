@@ -67,3 +67,19 @@ class PlantResponse(BaseModel):
 class PlantDetailResponse(PlantResponse):
     """PlantResponse com lista de eventos embutida — usada em GET /plants/{plant_id}."""
     events: list[EventResponse] = []
+
+
+class PlantSummary(BaseModel):
+    """Resumo para o card da home: últimas leituras de ambiente, PPM e rega.
+
+    Temperatura/umidade são compartilhadas entre plantas do mesmo `grow_label`
+    (ver lógica em app/api/v1/plants.py::_compute_plant_summary).
+    """
+    plant_id: uuid.UUID
+    last_temperature_c: float | None = None
+    last_temperature_at: datetime | None = None
+    last_humidity_rh: float | None = None
+    last_humidity_at: datetime | None = None
+    last_ppm: float | None = None
+    last_watering_at: datetime | None = None
+    last_watering_has_fert: bool = False

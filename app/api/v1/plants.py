@@ -11,11 +11,20 @@ from app.models.event import GrowEvent
 from app.models.plant import Plant
 from app.models.user import User
 from app.schemas.event import EventCreate, EventResponse, EventUpdate
-from app.schemas.plant import PlantCreate, PlantDetailResponse, PlantResponse, PlantUpdate
+from app.schemas.plant import (
+    PlantCreate,
+    PlantDetailResponse,
+    PlantResponse,
+    PlantSummary,
+    PlantUpdate,
+)
 from app.schemas.common import MessageResponse
 from app.services.auth import get_current_user
 
 router = APIRouter()
+
+# Event types considered "watering" for last_watering_* — frontend uses "rega"
+WATERING_EVENT_TYPES = ("rega", "watering")
 
 
 async def _get_plant_or_404(plant_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Plant:
@@ -26,6 +35,129 @@ async def _get_plant_or_404(plant_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSe
     if not plant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Planta não encontrada")
     return plant
+
+
+# ---------------------------------------------------------------------------
+# Summary helpers — shared between /summaries (batch) and /{plant_id}/summary
+# ---------------------------------------------------------------------------
+
+async def _latest_env_reading(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    plant_ids: list[uuid.UUID],
+    grow_label: str | None,
+    field: str,
+):
+    """Retorna (valor, event_date) do evento mais recente com `field` preenchido.
+
+    Implementa o "compartilhamento por grow_label" do item 3: se `grow_label`
+    não for nulo, considera eventos de TODAS as plantas do usuário com o mesmo
+    grow_label; caso contrário, considera apenas os eventos de `plant_ids`
+    (tipicamente uma única planta).
+    """
+    column = getattr(GrowEvent, field)
+
+    if grow_label:
+        stmt = (
+            select(column, GrowEvent.event_date)
+            .join(Plant, Plant.id == GrowEvent.plant_id)
+            .where(
+                Plant.user_id == user_id,
+                Plant.grow_label == grow_label,
+                column.is_not(None),
+            )
+            .order_by(GrowEvent.event_date.desc())
+            .limit(1)
+        )
+    else:
+        stmt = (
+            select(column, GrowEvent.event_date)
+            .where(
+                GrowEvent.plant_id.in_(plant_ids),
+                column.is_not(None),
+            )
+            .order_by(GrowEvent.event_date.desc())
+            .limit(1)
+        )
+
+    result = await db.execute(stmt)
+    row = result.first()
+    if row is None:
+        return None, None
+    return row[0], row[1]
+
+
+async def _latest_watering_event(db: AsyncSession, plant_id: uuid.UUID) -> GrowEvent | None:
+    stmt = (
+        select(GrowEvent)
+        .where(
+            GrowEvent.plant_id == plant_id,
+            GrowEvent.event_type.in_(WATERING_EVENT_TYPES),
+        )
+        .order_by(GrowEvent.event_date.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def _latest_ppm_event(db: AsyncSession, plant_id: uuid.UUID) -> GrowEvent | None:
+    stmt = (
+        select(GrowEvent)
+        .where(
+            GrowEvent.plant_id == plant_id,
+            GrowEvent.ppm.is_not(None),
+        )
+        .order_by(GrowEvent.event_date.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary:
+    user_id = plant.user_id
+
+    if plant.grow_label:
+        # Plantas do mesmo usuário/grow_label compartilham temperatura e umidade
+        result = await db.execute(
+            select(Plant.id).where(
+                Plant.user_id == user_id, Plant.grow_label == plant.grow_label
+            )
+        )
+        sibling_ids = [row[0] for row in result.all()]
+    else:
+        sibling_ids = [plant.id]
+
+    last_temp, last_temp_at = await _latest_env_reading(
+        db, user_id=user_id, plant_ids=sibling_ids, grow_label=plant.grow_label, field="temperature_c"
+    )
+    last_hum, last_hum_at = await _latest_env_reading(
+        db, user_id=user_id, plant_ids=sibling_ids, grow_label=plant.grow_label, field="humidity_rh"
+    )
+
+    last_ppm_event = await _latest_ppm_event(db, plant.id)
+    last_ppm = last_ppm_event.ppm if last_ppm_event else None
+
+    last_watering = await _latest_watering_event(db, plant.id)
+    last_watering_at = last_watering.event_date if last_watering else None
+    last_watering_has_fert = bool(
+        last_watering
+        and last_watering.ppm is not None
+        and last_watering.is_flush is not True
+    )
+
+    return PlantSummary(
+        plant_id=plant.id,
+        last_temperature_c=last_temp,
+        last_temperature_at=last_temp_at,
+        last_humidity_rh=last_hum,
+        last_humidity_at=last_hum_at,
+        last_ppm=last_ppm,
+        last_watering_at=last_watering_at,
+        last_watering_has_fert=last_watering_has_fert,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +198,53 @@ async def create_plant(
     await db.commit()
     await db.refresh(plant)
     return plant
+
+
+# ---------------------------------------------------------------------------
+# GET /plants/grow-labels
+# ---------------------------------------------------------------------------
+
+@router.get("/grow-labels", response_model=list[str])
+async def list_grow_labels(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lista os `grow_label` distintos e não-nulos das plantas do usuário,
+    ordenados alfabeticamente — usado para popular o dropdown ao criar planta."""
+    result = await db.execute(
+        select(Plant.grow_label)
+        .where(Plant.user_id == current_user.id, Plant.grow_label.is_not(None))
+        .distinct()
+        .order_by(Plant.grow_label.asc())
+    )
+    return [row[0] for row in result.all() if row[0]]
+
+
+# ---------------------------------------------------------------------------
+# GET /plants/summaries — batch summary (home cards)
+# ---------------------------------------------------------------------------
+
+@router.get("/summaries", response_model=dict[uuid.UUID, PlantSummary])
+async def get_plant_summaries(
+    is_active: Optional[bool] = Query(default=None, description="Filtrar por status ativo"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retorna um dict `plant_id -> PlantSummary` para todas as plantas do usuário.
+
+    Pensado para o card da home: o front faz uma única chamada e recebe o resumo
+    (última temperatura/umidade/PPM/rega) de todas as plantas de uma vez.
+    """
+    stmt = select(Plant).where(Plant.user_id == current_user.id)
+    if is_active is not None:
+        stmt = stmt.where(Plant.is_active == is_active)
+    result = await db.execute(stmt)
+    plants = result.scalars().all()
+
+    summaries: dict[uuid.UUID, PlantSummary] = {}
+    for plant in plants:
+        summaries[plant.id] = await _compute_plant_summary(db, plant)
+    return summaries
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +304,22 @@ async def delete_plant(
     plant.is_active = False
     await db.commit()
     return MessageResponse(message="Planta desativada")
+
+
+# ---------------------------------------------------------------------------
+# GET /plants/{plant_id}/summary
+# ---------------------------------------------------------------------------
+
+@router.get("/{plant_id}/summary", response_model=PlantSummary)
+async def get_plant_summary(
+    plant_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resumo para o card da home: última temperatura/umidade (compartilhadas
+    entre plantas do mesmo grow_label), último PPM e última rega desta planta."""
+    plant = await _get_plant_or_404(plant_id, current_user.id, db)
+    return await _compute_plant_summary(db, plant)
 
 
 # ---------------------------------------------------------------------------
