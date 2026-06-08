@@ -79,9 +79,19 @@ async def _refresh_cache(db: AsyncSession) -> AIConfig:
         _cache["llm"] = ai_provider.build_llm(config.provider, config.chat_model, config.temperature)
         _cache["embeddings"] = ai_provider.build_embeddings(config.embedding_provider, config.embedding_model)
 
-    _cache["config"] = config
+    # Armazena uma cópia transient (desvinculada de qualquer Session) para
+    # evitar o erro "Instance is not bound to a Session" quando o cache é
+    # acessado em requisições futuras (onde a sessão original já fechou).
+    _cache["config"] = AIConfig(
+        provider=config.provider,
+        chat_model=config.chat_model,
+        temperature=config.temperature,
+        embedding_provider=config.embedding_provider,
+        embedding_model=config.embedding_model,
+        embedding_dimensions=config.embedding_dimensions,
+    )
     _cache["fetched_at"] = time.monotonic()
-    return config
+    return _cache["config"]
 
 
 async def get_ai_context(db: AsyncSession) -> tuple[AIConfig, object, object]:
