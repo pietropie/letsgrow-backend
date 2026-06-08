@@ -12,6 +12,7 @@ from app.models.plant import Plant
 from app.models.user import User
 from app.schemas.event import EventAnalysisResponse, EventCreate, EventResponse, EventUpdate
 from app.schemas.plant import (
+    BobTipResponse,
     PlantCreate,
     PlantDetailResponse,
     PlantResponse,
@@ -372,6 +373,11 @@ async def create_event(
 
     await db.commit()
     await db.refresh(event)
+
+    # Invalida cache de dica do Bob para esta planta (novo evento pode mudar o cenário)
+    from app.services.rag import invalidate_plant_tip_cache
+    invalidate_plant_tip_cache(plant_id)
+
     return event
 
 
@@ -474,3 +480,28 @@ async def analyze_event(
         observacao_foto=analysis.get("observacao_foto"),
         photos_analyzed=len(event.photo_keys),
     )
+
+
+@router.get("/{plant_id}/bob-tip", response_model=BobTipResponse | None)
+async def get_bob_tip(
+    plant_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retorna uma dica contextual do Bob para a planta, baseada em regras +
+    LLM. O resultado é cacheado por ~4h para evitar chamadas repetidas ao LLM.
+    Retorna 204/null se não houver cenário relevante no momento."""
+    plant = await _get_plant_or_404(plant_id, current_user.id, db)
+
+    # Carrega os 30 eventos mais recentes (suficiente para as regras de rega/fert)
+    result = await db.execute(
+        select(GrowEvent)
+        .where(GrowEvent.plant_id == plant_id)
+        .order_by(GrowEvent.event_date.desc())
+        .limit(30)
+    )
+    events = result.scalars().all()
+
+    from app.services.rag import generate_plant_tip
+    tip = await generate_plant_tip(db, plant=plant, events=events)
+    return tip  # None serializa como 204/null no FastAPI com response_model=X|None

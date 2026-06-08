@@ -69,6 +69,14 @@ class PlantDetailResponse(PlantResponse):
     events: list[EventResponse] = []
 
 
+class BobTipResponse(BaseModel):
+    """Dica contextual do Bob para a planta — gerada por regras + LLM."""
+    scenario: str       # "flip_soon" | "water_due" | "fert_due" | "pre_harvest" | "seedling"
+    tip: str            # Texto em linguagem natural no estilo Bob
+    priority: str       # "info" | "warning" | "urgent"
+    icon: str           # Emoji representando o cenário
+
+
 class PlantSummary(BaseModel):
     """Resumo para o card da home: últimas leituras de ambiente, PPM e rega.
 

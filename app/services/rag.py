@@ -142,6 +142,217 @@ async def chat(
     return response.content
 
 
+# ─── Dicas contextuais do Bob ────────────────────────────────────────────────
+#
+# Motor híbrido: regras determinísticas detectam o cenário relevante para a
+# planta (baseadas em datas, histórico de eventos e fases), e o LLM formula
+# a dica em linguagem natural no estilo Bob. O resultado fica em cache por
+# TIP_CACHE_TTL segundos para não chamar o LLM a cada reload de tela.
+
+_TIP_CACHE_TTL = 4 * 3600  # 4 horas
+_tip_cache: dict = {}   # plant_id_str -> {"scenario": str, "response": dict, "at": float}
+
+
+def _detect_tip_scenario(plant: Plant, events: list) -> dict | None:
+    """Regras determinísticas que detectam o cenário mais relevante da planta."""
+    from datetime import date as _date
+
+    today = _date.today()
+
+    germ_days: int | None = None
+    if plant.germination_date:
+        germ_days = (today - plant.germination_date).days
+
+    flip_days: int | None = None
+    if plant.flip_date:
+        flip_days = (today - plant.flip_date).days
+
+    expected_harvest = plant.expected_harvest_days or 63  # padrão conservador para foto
+
+    # Ordena eventos do mais recente para o mais antigo
+    sorted_evts = sorted(events, key=lambda e: e.event_date, reverse=True)
+    waterings = [e for e in sorted_evts if e.event_type in ("rega", "watering")]
+
+    # ── 1. Pré-colheita (urgente) ──
+    if plant.current_phase == "flower" and flip_days is not None:
+        days_left = expected_harvest - flip_days
+        if 0 <= days_left <= 10:
+            return {
+                "scenario": "pre_harvest",
+                "priority": "urgent",
+                "icon": "🌾",
+                "flip_days": flip_days,
+                "days_left": days_left,
+                "expected_harvest": expected_harvest,
+            }
+
+    # ── 2. Flip recomendado (vegetativo >= 45 dias) ──
+    if plant.current_phase == "veg" and germ_days is not None and germ_days >= 45:
+        return {
+            "scenario": "flip_soon",
+            "priority": "warning",
+            "icon": "⚡",
+            "germ_days": germ_days,
+        }
+
+    # ── 3. Rega atrasada ou fertilização devida ──
+    if waterings:
+        last_w = waterings[0]
+        # event_date pode ser datetime ou date
+        last_w_date = last_w.event_date.date() if hasattr(last_w.event_date, "date") else last_w.event_date
+        days_since = (today - last_w_date).days
+        if days_since >= 3:
+            # Conta regas consecutivas sem fertilizante (flush ou sem PPM)
+            consecutive_flush = 0
+            for w in waterings[:5]:
+                if getattr(w, "is_flush", False) or not getattr(w, "ppm", None):
+                    consecutive_flush += 1
+                else:
+                    break
+            if consecutive_flush >= 2:
+                return {
+                    "scenario": "fert_due",
+                    "priority": "info",
+                    "icon": "🌿",
+                    "days_since_water": days_since,
+                    "consecutive_flush": consecutive_flush,
+                }
+            return {
+                "scenario": "water_due",
+                "priority": "warning",
+                "icon": "💧",
+                "days_since_water": days_since,
+            }
+
+    # ── 4. Seedling (< 14 dias) ──
+    if germ_days is not None and germ_days < 14:
+        return {
+            "scenario": "seedling",
+            "priority": "info",
+            "icon": "🌱",
+            "germ_days": germ_days,
+        }
+
+    return None
+
+
+def _build_tip_prompt(plant: Plant, scenario: dict) -> str:
+    base = (
+        f"Você é Bob, consultor especialista em cannabis. "
+        f"Em 2 a 3 frases curtas, diretas e amigáveis, dê uma dica ao cultivador "
+        f"sobre a planta {plant.strain_name} (fase: {plant.current_phase}). "
+        f"Sem emojis, sem saudação, sem 'Bob aqui'. Responda SOMENTE o texto da dica.\n\n"
+        f"Contexto: "
+    )
+    s = scenario["scenario"]
+    if s == "pre_harvest":
+        return base + (
+            f"A planta está em floração há {scenario['flip_days']} dias com previsão de "
+            f"{scenario['expected_harvest']} dias. Faltam ~{scenario['days_left']} dias para a colheita. "
+            f"Dê uma dica de preparação (tricomas, lavagem, etc.)."
+        )
+    if s == "flip_soon":
+        return base + (
+            f"A planta está com {scenario['germ_days']} dias no vegetativo. "
+            f"Recomende ao cultivador considerar o flip 12/12 em breve."
+        )
+    if s == "water_due":
+        return base + (
+            f"A última rega foi há {scenario['days_since_water']} dias. "
+            f"Alerte o cultivador para verificar se a planta precisa de água."
+        )
+    if s == "fert_due":
+        return base + (
+            f"As últimas {scenario['consecutive_flush']} regas foram só com água (sem nutrientes). "
+            f"Recomende uma rega com fertilizante na próxima vez."
+        )
+    if s == "seedling":
+        return base + (
+            f"A planta está com {scenario['germ_days']} dias desde a germinação (fase seedling). "
+            f"Dê uma dica rápida de cuidados nesta fase."
+        )
+    return base + "Dê uma dica geral de cultivo para esta planta."
+
+
+def _template_tip(scenario: dict) -> str:
+    """Fallback sem LLM — usado quando o modelo falha ou timeout."""
+    s = scenario["scenario"]
+    if s == "pre_harvest":
+        dl = scenario.get("days_left", "?")
+        return (
+            f"Faltam aproximadamente {dl} dias para a colheita. "
+            f"Comece a observar os tricomas e prepare a lavagem do substrato se necessário."
+        )
+    if s == "flip_soon":
+        gd = scenario.get("germ_days", "?")
+        return (
+            f"Sua planta está com {gd} dias de vegetativo — "
+            f"considere fazer o flip para 12/12 em breve para iniciar a floração."
+        )
+    if s == "water_due":
+        ds = scenario.get("days_since_water", "?")
+        return (
+            f"Faz {ds} dias desde a última rega. "
+            f"Verifique se o substrato está seco e se a planta precisa de água."
+        )
+    if s == "fert_due":
+        cf = scenario.get("consecutive_flush", "?")
+        return (
+            f"As últimas {cf} regas foram só com água. "
+            f"Considere uma rega com fertilizante para repor os nutrientes."
+        )
+    if s == "seedling":
+        gd = scenario.get("germ_days", "?")
+        return (
+            f"Sua planta está com {gd} dias na fase seedling. "
+            f"Mantenha umidade entre 60-70% e evite nutrientes fortes por enquanto."
+        )
+    return "Verifique sua planta hoje e registre um evento no diário."
+
+
+async def generate_plant_tip(db, *, plant: Plant, events: list) -> dict | None:
+    """Detecta cenário + gera dica via LLM com cache de 4h. Retorna dict ou None."""
+    import time as _time
+    from langchain_core.messages import HumanMessage
+
+    scenario = _detect_tip_scenario(plant, events)
+    if scenario is None:
+        return None
+
+    plant_key = str(plant.id)
+    cached = _tip_cache.get(plant_key)
+    if (
+        cached
+        and (_time.monotonic() - cached["at"]) < _TIP_CACHE_TTL
+        and cached["scenario"] == scenario["scenario"]
+    ):
+        return cached["response"]
+
+    # Gera via LLM; fallback para template se falhar
+    prompt = _build_tip_prompt(plant, scenario)
+    try:
+        _, llm, _ = await get_ai_context(db)
+        resp = await llm.ainvoke([HumanMessage(content=prompt)])
+        tip_text = resp.content.strip()
+    except Exception as exc:
+        logger.warning("Bob tip LLM falhou (%s) — usando template", exc)
+        tip_text = _template_tip(scenario)
+
+    result = {
+        "scenario": scenario["scenario"],
+        "tip": tip_text,
+        "priority": scenario["priority"],
+        "icon": scenario["icon"],
+    }
+    _tip_cache[plant_key] = {"scenario": scenario["scenario"], "response": result, "at": _time.monotonic()}
+    return result
+
+
+def invalidate_plant_tip_cache(plant_id) -> None:
+    """Chame após criar evento para forçar regerar a dica na próxima requisição."""
+    _tip_cache.pop(str(plant_id), None)
+
+
 # ─── Análise de fotos de eventos do diário (multimodal) ──────────────────────
 #
 # Usa o mesmo `llm` resolvido via get_ai_context (cache de ~60s, configurável
