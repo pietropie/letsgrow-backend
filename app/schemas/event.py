@@ -40,7 +40,12 @@ class EventUpdate(BaseModel):
 
 class EventAnalysisResponse(BaseModel):
     event_id: uuid.UUID
-    analysis: str
+    # Campos estruturados retornados pelo Bob (JSON do LLM)
+    status: str                   # "saudavel" | "atencao" | "critico"
+    resumo: str                   # 1-2 frases — exibidas no card de resumo
+    problemas: list[str]          # lista de problemas detectados (pode ser vazia)
+    recomendacoes: list[str]      # lista de recomendações práticas
+    observacao_foto: str | None   # nota se qualidade das fotos limitou a análise
     photos_analyzed: int
 
 

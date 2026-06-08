@@ -153,21 +153,24 @@ async def chat(
 # escolhe o provider/modelo em /admin/ai-panel, então recomendamos Gemini.
 
 def _build_photo_analysis_prompt(plant: Plant, event) -> str:
-    notes = f"\nObservações registradas pelo cultivador neste evento: {event.notes}" if event.notes else ""
+    notes = f"\nObservações do cultivador: {event.notes}" if event.notes else ""
     return (
-        "Você é um consultor especialista em cultivo de cannabis analisando fotos "
-        f"enviadas por um cultivador. Planta: {plant.strain_name} "
-        f"(fase atual: {plant.current_phase}). Tipo do evento do diário: {event.event_type}."
-        f"{notes}\n\n"
-        "Com base SOMENTE no que é visível nas imagens, escreva uma análise objetiva "
-        "cobrindo:\n"
-        "1) Sinais de problemas visíveis (deficiências nutricionais, pragas, doenças, "
-        "estresse hídrico/luminoso, queima de nutrientes, etc.) — ou ausência deles;\n"
-        "2) Estágio de desenvolvimento e estado geral de saúde aparente;\n"
-        "3) Recomendações práticas e específicas para o cultivador.\n\n"
-        "Seja direto e use linguagem acessível. Se as fotos não permitirem uma "
-        "avaliação confiável (ângulo ruim, baixa qualidade, etc.), diga isso "
-        "explicitamente em vez de especular."
+        "Você é Bob, consultor especialista em cultivo de cannabis com linguagem acessível e direta. "
+        f"Analise as fotos enviadas da planta {plant.strain_name} "
+        f"(fase: {plant.current_phase}, evento registrado: {event.event_type}).{notes}\n\n"
+        "Responda SOMENTE com um objeto JSON válido — sem texto antes ou depois do JSON:\n"
+        '{\n'
+        '  "status": "saudavel" ou "atencao" ou "critico",\n'
+        '  "resumo": "1 a 2 frases descrevendo o estado geral da planta",\n'
+        '  "problemas": ["problema visível 1", "problema visível 2"],\n'
+        '  "recomendacoes": ["recomendacao pratica 1", "recomendacao pratica 2"],\n'
+        '  "observacao_foto": null ou "nota caso a qualidade/angulo das fotos limite a analise"\n'
+        '}\n\n'
+        "Regras:\n"
+        "- Liste SOMENTE o que é claramente visível nas imagens (sem especulação).\n"
+        "- Se a planta parecer saudável, 'problemas' deve ser lista vazia [].\n"
+        "- Use linguagem simples que um cultivador iniciante entenda.\n"
+        "- Se a qualidade das fotos não permitir análise confiável, indique em 'observacao_foto'."
     )
 
 
@@ -215,4 +218,30 @@ async def analyze_event_photos(db: AsyncSession, *, plant: Plant, event) -> str:
 
     _, llm, _ = await get_ai_context(db)
     response = await llm.ainvoke([HumanMessage(content=content_blocks)])
-    return response.content
+    text = response.content
+
+    # Tenta extrair JSON da resposta (o LLM às vezes envolve em ```json ... ```)
+    import json as _json
+    try:
+        start = text.find('{')
+        end = text.rfind('}') + 1
+        if start == -1 or end == 0:
+            raise ValueError("Nenhum objeto JSON encontrado na resposta do LLM")
+        data = _json.loads(text[start:end])
+        # Garante que os campos obrigatórios existem com tipos corretos
+        return {
+            "status": str(data.get("status", "atencao")),
+            "resumo": str(data.get("resumo", text[:200])),
+            "problemas": [str(p) for p in data.get("problemas", [])],
+            "recomendacoes": [str(r) for r in data.get("recomendacoes", [])],
+            "observacao_foto": data.get("observacao_foto") or None,
+        }
+    except Exception as parse_err:
+        logger.warning("Falha ao parsear JSON do Bob (%s) — usando resposta raw como resumo", parse_err)
+        return {
+            "status": "atencao",
+            "resumo": text[:300],
+            "problemas": [],
+            "recomendacoes": [],
+            "observacao_foto": "Resposta não estruturada — exibindo texto original.",
+        }

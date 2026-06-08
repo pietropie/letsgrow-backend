@@ -467,6 +467,10 @@ async def analyze_event(
 
     return EventAnalysisResponse(
         event_id=event.id,
-        analysis=analysis,
+        status=analysis["status"],
+        resumo=analysis["resumo"],
+        problemas=analysis["problemas"],
+        recomendacoes=analysis["recomendacoes"],
+        observacao_foto=analysis.get("observacao_foto"),
         photos_analyzed=len(event.photo_keys),
     )
