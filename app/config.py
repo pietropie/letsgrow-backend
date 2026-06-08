@@ -29,7 +29,9 @@ class Settings(BaseSettings):
 
     # Google AI (Gemini)
     GOOGLE_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash-exp"
+    # gemini-2.0-flash / gemini-2.0-flash-exp foram desativados pelo Google em
+    # 01/06/2026 — usar um modelo estável atual com suporte a visão.
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     # "models/text-embedding-004" foi descontinuado pela API do Gemini (404 NOT_FOUND
     # em embedContent na v1beta) — usar "models/gemini-embedding-001", que por padrão
     # gera vetores de 3072 dimensões. Para manter compatibilidade com a coluna

@@ -47,7 +47,7 @@ def upgrade() -> None:
                 (id, provider, chat_model, temperature,
                  embedding_provider, embedding_model, embedding_dimensions, updated_by)
             VALUES
-                (:id, 'gemini', 'gemini-2.0-flash-exp', 0.3,
+                (:id, 'gemini', 'gemini-2.5-flash', 0.3,
                  'gemini', 'models/gemini-embedding-001', 768, 'migration-seed')
             """
         ).bindparams(sa.bindparam('id', value=_SEED_ID, type_=UUID(as_uuid=True)))
