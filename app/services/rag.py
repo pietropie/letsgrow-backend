@@ -130,3 +130,79 @@ async def chat(
     _, llm, _ = await get_ai_context(db)
     response = await llm.ainvoke(messages)
     return response.content
+
+
+# ─── Análise de fotos de eventos do diário (multimodal) ──────────────────────
+#
+# Usa o mesmo `llm` resolvido via get_ai_context (cache de ~60s, configurável
+# pelo painel admin) — mas aqui montamos uma mensagem multimodal (texto + N
+# imagens em base64) seguindo o formato padrão de "content blocks" do
+# LangChain (`image_url` com data URI), suportado nativamente por
+# ChatGoogleGenerativeAI/ChatOpenAI/ChatAnthropic. Provedores sem suporte a
+# visão (DeepSeek/Z.ai) vão simplesmente falhar na chamada — é o admin quem
+# escolhe o provider/modelo em /admin/ai-panel, então recomendamos Gemini.
+
+def _build_photo_analysis_prompt(plant: Plant, event) -> str:
+    notes = f"\nObservações registradas pelo cultivador neste evento: {event.notes}" if event.notes else ""
+    return (
+        "Você é um consultor especialista em cultivo de cannabis analisando fotos "
+        f"enviadas por um cultivador. Planta: {plant.strain_name} "
+        f"(fase atual: {plant.current_phase}). Tipo do evento do diário: {event.event_type}."
+        f"{notes}\n\n"
+        "Com base SOMENTE no que é visível nas imagens, escreva uma análise objetiva "
+        "cobrindo:\n"
+        "1) Sinais de problemas visíveis (deficiências nutricionais, pragas, doenças, "
+        "estresse hídrico/luminoso, queima de nutrientes, etc.) — ou ausência deles;\n"
+        "2) Estágio de desenvolvimento e estado geral de saúde aparente;\n"
+        "3) Recomendações práticas e específicas para o cultivador.\n\n"
+        "Seja direto e use linguagem acessível. Se as fotos não permitirem uma "
+        "avaliação confiável (ângulo ruim, baixa qualidade, etc.), diga isso "
+        "explicitamente em vez de especular."
+    )
+
+
+def _read_photo_object(object_key: str) -> tuple[bytes, str]:
+    """Lê os bytes de uma foto direto do MinIO (client interno — roda em thread,
+    pois o SDK do MinIO é síncrono)."""
+    from app.services.storage import BUCKET_EVENTS, get_minio_client
+
+    response = get_minio_client().get_object(BUCKET_EVENTS, object_key)
+    try:
+        data = response.read()
+        content_type = response.headers.get("Content-Type") or "image/jpeg"
+        return data, content_type
+    finally:
+        response.close()
+        response.release_conn()
+
+
+async def analyze_event_photos(db: AsyncSession, *, plant: Plant, event) -> str:
+    """Envia as fotos de um evento do diário para o LLM multimodal configurado
+    e retorna uma análise em texto (problemas visíveis, estágio, recomendações)."""
+    import asyncio
+    import base64
+
+    from langchain_core.messages import HumanMessage
+
+    content_blocks: list[dict] = [
+        {"type": "text", "text": _build_photo_analysis_prompt(plant, event)}
+    ]
+
+    for object_key in (event.photo_keys or [])[:6]:
+        try:
+            data, content_type = await asyncio.to_thread(_read_photo_object, object_key)
+        except Exception as exc:
+            logger.warning("Falha ao baixar foto %s para análise de IA: %s", object_key, exc)
+            continue
+        b64 = base64.b64encode(data).decode("ascii")
+        content_blocks.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{content_type};base64,{b64}"},
+        })
+
+    if len(content_blocks) == 1:
+        raise RuntimeError("Não foi possível carregar nenhuma das fotos deste evento para análise.")
+
+    _, llm, _ = await get_ai_context(db)
+    response = await llm.ainvoke([HumanMessage(content=content_blocks)])
+    return response.content

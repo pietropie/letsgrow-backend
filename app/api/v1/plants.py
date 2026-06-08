@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models.event import GrowEvent
 from app.models.plant import Plant
 from app.models.user import User
-from app.schemas.event import EventCreate, EventResponse, EventUpdate
+from app.schemas.event import EventAnalysisResponse, EventCreate, EventResponse, EventUpdate
 from app.schemas.plant import (
     PlantCreate,
     PlantDetailResponse,
@@ -424,3 +424,49 @@ async def delete_event(
     await db.delete(event)
     await db.commit()
     return MessageResponse(message="Evento removido")
+
+
+# ---------------------------------------------------------------------------
+# POST /plants/{plant_id}/events/{event_id}/analyze
+# ---------------------------------------------------------------------------
+
+@router.post("/{plant_id}/events/{event_id}/analyze", response_model=EventAnalysisResponse)
+async def analyze_event(
+    plant_id: uuid.UUID,
+    event_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Analisa as fotos de um evento do diário com IA multimodal (requer um
+    provedor com suporte a visão configurado em /admin/ai-panel — ex.: Gemini)."""
+    plant = await _get_plant_or_404(plant_id, current_user.id, db)
+    result = await db.execute(
+        select(GrowEvent).where(GrowEvent.id == event_id, GrowEvent.plant_id == plant_id)
+    )
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evento não encontrado")
+
+    if not event.photo_keys:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este evento não possui fotos para analisar",
+        )
+
+    from app.services.rag import analyze_event_photos
+
+    try:
+        analysis = await analyze_event_photos(db, plant=plant, event=event)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Falha ao analisar fotos com IA: {exc}",
+        )
+
+    return EventAnalysisResponse(
+        event_id=event.id,
+        analysis=analysis,
+        photos_analyzed=len(event.photo_keys),
+    )

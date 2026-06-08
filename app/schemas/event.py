@@ -38,6 +38,12 @@ class EventUpdate(BaseModel):
     photo_keys: list[str] | None = None
 
 
+class EventAnalysisResponse(BaseModel):
+    event_id: uuid.UUID
+    analysis: str
+    photos_analyzed: int
+
+
 class EventResponse(BaseModel):
     id: uuid.UUID
     plant_id: uuid.UUID
