@@ -65,11 +65,28 @@ class Settings(BaseSettings):
     MQTT_PASSWORD: str = ""
 
     # MinIO
+    # MINIO_ENDPOINT é o host usado pelo backend para FALAR com o MinIO
+    # internamente (em produção, o nome do serviço no docker-compose: "minio:9000",
+    # só resolvível dentro da rede do compose).
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "letsgrow"
     MINIO_SECRET_KEY: str = "letsgrow_dev"
     MINIO_BUCKET: str = "letsgrow-media"
     MINIO_SECURE: bool = False
+
+    # MINIO_PUBLIC_ENDPOINT é o host/porta usado para GERAR as URLs pré-assinadas
+    # (upload/download) que vão para o app mobile — precisa ser um endereço que
+    # o celular consegue resolver e alcançar pela internet (domínio público ou
+    # IP:porta do servidor), nunca o nome interno "minio". Sem isso, o app
+    # recebe uma URL com host "minio" e quebra com "Unable to resolve host".
+    # Se ficar em branco, cai para MINIO_ENDPOINT/MINIO_SECURE (ok só em dev,
+    # quando o host configurado já é algo alcançável pelo celular).
+    MINIO_PUBLIC_ENDPOINT: str = ""
+    # String (não bool) de propósito: deixamos "" significar "herdar
+    # MINIO_SECURE" — um campo bool tradicional rejeitaria "" como valor de
+    # env var. Aceita "true"/"false" (case-insensitive); qualquer outra coisa
+    # (incl. "") cai no fallback. Ver _minio_public_secure() em storage.py.
+    MINIO_PUBLIC_SECURE: str = ""
 
     # Subscription plan limits
     FREE_MAX_GROWS: int = 1

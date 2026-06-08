@@ -76,6 +76,13 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
       MINIO_SECURE: "false"
+      # Host PÚBLICO usado para gerar as URLs de upload/download que vão pro
+      # app mobile (precisa ser resolvível pela internet — "minio" não é).
+      # Defina MINIO_PUBLIC_ENDPOINT (e opcionalmente MINIO_PUBLIC_SECURE) no
+      # .env do servidor / variáveis do Coolify com o domínio ou IP:porta
+      # público real do MinIO.
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-}
+      MINIO_PUBLIC_SECURE: ${MINIO_PUBLIC_SECURE:-}
       SECRET_KEY: ${SECRET_KEY}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash-exp}
