@@ -304,22 +304,3 @@ async def remove_strain_image(
     strain.image_url = None
     await db.commit()
     return None
- db.refresh(strain)
-    return strain
-
-
-@router.delete("/strains/{strain_id}/image", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_strain_image(
-    strain_id: uuid.UUID,
-    _: None = Depends(require_admin_token),
-    db: AsyncSession = Depends(get_db),
-):
-    """Remove a imagem de capa de uma strain."""
-    strain = await db.get(Strain, strain_id)
-    if strain is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strain não encontrada")
-
-    _delete_strain_image_from_storage(strain_id)
-    strain.image_url = None
-    await db.commit()
-    return None
