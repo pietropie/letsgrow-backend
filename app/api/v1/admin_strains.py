@@ -264,14 +264,24 @@ async def upload_strain_image(
         )
 
     object_key = _strain_object_key(strain_id)
-    client = get_minio_client()
-    client.put_object(
-        BUCKET_STRAINS,
-        object_key,
-        data=io.BytesIO(contents),
-        length=len(contents),
-        content_type=ct or "image/jpeg",
-    )
+    try:
+        client = get_minio_client()
+        # Cria o bucket se não existir (race-condition no startup: MinIO pode
+        # não estar pronto quando ensure_buckets() rodou no lifespan)
+        if not client.bucket_exists(BUCKET_STRAINS):
+            client.make_bucket(BUCKET_STRAINS)
+        client.put_object(
+            BUCKET_STRAINS,
+            object_key,
+            data=io.BytesIO(contents),
+            length=len(contents),
+            content_type=ct or "image/jpeg",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Falha ao salvar imagem no storage: {exc}",
+        )
 
     strain.image_url = _strain_public_url(strain_id)
     await db.commit()
