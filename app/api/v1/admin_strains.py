@@ -16,15 +16,14 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.admin import require_admin_token
-from app.config import settings as cfg
 from app.database import get_db
 from app.models.strain import Strain
-from app.services.storage import BUCKET_STRAINS, _minio_public_secure, delete_object, get_minio_client
+from app.services.storage import BUCKET_STRAINS, delete_object, get_minio_client, strain_image_url_for_response
 
 router = APIRouter()
 
@@ -53,6 +52,12 @@ class StrainAdminItem(BaseModel):
     source_file: str
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def _resolve_image_url(cls, v: str | None) -> str | None:
+        """Converte object key ou URL direta armazenada no banco → URL presignada."""
+        return strain_image_url_for_response(v)
 
     model_config = {"from_attributes": True}
 
@@ -220,13 +225,6 @@ def _strain_object_key(strain_id: uuid.UUID) -> str:
     return f"{strain_id}/cover.jpg"
 
 
-def _strain_public_url(strain_id: uuid.UUID) -> str:
-    endpoint = cfg.MINIO_PUBLIC_ENDPOINT or cfg.MINIO_ENDPOINT
-    secure = _minio_public_secure(cfg)
-    scheme = "https" if secure else "http"
-    return f"{scheme}://{endpoint}/{BUCKET_STRAINS}/{_strain_object_key(strain_id)}"
-
-
 def _delete_strain_image_from_storage(strain_id: uuid.UUID) -> None:
     delete_object(BUCKET_STRAINS, _strain_object_key(strain_id))
 
@@ -283,9 +281,30 @@ async def upload_strain_image(
             detail=f"Falha ao salvar imagem no storage: {exc}",
         )
 
-    strain.image_url = _strain_public_url(strain_id)
+    # Armazena apenas o object key; a URL presignada é gerada on-the-fly
+    # em StrainAdminItem._resolve_image_url (e PlantSummary em plants.py).
+    strain.image_url = _strain_object_key(strain_id)
     await db.commit()
     await db.refresh(strain)
+    return strain
+
+
+@router.delete("/strains/{strain_id}/image", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_strain_image(
+    strain_id: uuid.UUID,
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a imagem de capa de uma strain."""
+    strain = await db.get(Strain, strain_id)
+    if strain is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strain não encontrada")
+
+    _delete_strain_image_from_storage(strain_id)
+    strain.image_url = None
+    await db.commit()
+    return None
+ db.refresh(strain)
     return strain
 
 

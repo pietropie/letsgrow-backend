@@ -105,9 +105,9 @@ def presign_upload(bucket: str, object_key: str, content_type: str = "image/jpeg
 
 
 def presign_download(bucket: str, object_key: str) -> str:
-    """Retorna URL pré-assinada para GET (visualização de foto).
+    """Retorna URL pr\xc3\xa9-assinada para GET (visualiza\xc3\xa7\xc3\xa3o de foto).
 
-    Mesmo motivo do presign_upload: precisa do host público, não do interno."""
+    Mesmo motivo do presign_upload: precisa do host p\xc3\xbaBlico, n\xc3\xa3o do interno."""
     from datetime import timedelta
 
     client = get_minio_presign_client()
@@ -116,6 +116,36 @@ def presign_download(bucket: str, object_key: str) -> str:
         object_key,
         expires=timedelta(seconds=_PRESIGN_EXPIRY_SECONDS * 24),
     )
+
+
+def strain_image_url_for_response(stored: str | None) -> str | None:
+    """Converte o valor armazenado em strain.image_url para URL presignada.
+
+    Suporta dois formatos de entrada:
+    - Object key: "UUID/cover.jpg"  (novo formato, p\xc3\xb3s-fix)
+    - URL direta:  "https://minio.\xe2\x80\xa6/strain-images/UUID/cover.jpg"  (legado)
+    URLs externas (CDN de terceiro) sem o marcador do bucket s\xc3\xa3o retornadas
+    sem altera\xc3\xa7\xc3\xa3o \xe2\x80\x94 n\xc3\xa3o s\xc3\xa3o objetos MinIO nossos.
+    """
+    if not stored:
+        return None
+    if not stored.startswith("http"):
+        # Novo formato: apenas o object key \xe2\x86\x92 gera presign direto
+        try:
+            return presign_download(BUCKET_STRAINS, stored)
+        except Exception:
+            return None
+    # Legado: tenta extrair object key da URL direta do MinIO
+    try:
+        marker = f"/{BUCKET_STRAINS}/"
+        idx = stored.find(marker)
+        if idx != -1:
+            key = stored[idx + len(marker):]
+            return presign_download(BUCKET_STRAINS, key)
+    except Exception:
+        pass
+    # URL externa (ex: CDN de terceiro) \xe2\x80\x94 retorna como est\xc3\xa1
+    return stored
 
 
 def delete_object(bucket: str, object_key: str) -> None:

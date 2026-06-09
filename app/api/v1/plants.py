@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.services.storage import strain_image_url_for_response
 from app.models.event import GrowEvent
 from app.models.plant import Plant
 from app.models.strain import Strain
@@ -161,7 +162,7 @@ async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary
         )
         row = strain_result.one_or_none()
         if row:
-            strain_image_url = row[0]
+            strain_image_url = strain_image_url_for_response(row[0])
 
     return PlantSummary(
         plant_id=plant.id,
