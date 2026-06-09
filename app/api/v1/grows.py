@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.grow import Grow
 from app.models.plant import Plant
-from app.models.pot import Pot
 from app.models.user import User
 from app.schemas.common import MessageResponse
 from app.schemas.grow import GrowCreate, GrowResponse, GrowSummary, GrowUpdate
@@ -40,16 +39,9 @@ async def list_grows(
 
     summaries = []
     for grow in grows:
-        pot_count_result = await db.execute(
-            select(func.count(Pot.id)).where(Pot.grow_id == grow.id)
-        )
-        pot_count = pot_count_result.scalar() or 0
-
         active_plant_result = await db.execute(
             select(func.count(Plant.id))
-            .select_from(Plant)
-            .join(Pot, Plant.pot_id == Pot.id)
-            .where(Pot.grow_id == grow.id, Plant.is_active == True)
+            .where(Plant.grow_id == grow.id, Plant.is_active == True)
         )
         active_count = active_plant_result.scalar() or 0
 
@@ -60,7 +52,7 @@ async def list_grows(
                 grow_type=grow.grow_type,
                 status=grow.status,
                 start_date=grow.start_date,
-                pot_count=pot_count,
+                pot_count=0,
                 active_plant_count=active_count,
                 days_running=(date.today() - grow.start_date).days,
             )

@@ -18,7 +18,8 @@ class PlantCreate(BaseModel):
     current_phase: str = "germination"
     # germination | seedling | veg | flower | harvest | done
     expected_harvest_days: int | None = None
-    grow_label: str | None = None
+    grow_id: uuid.UUID | None = None    # vínculo relacional com grows
+    grow_label: str | None = None       # fallback texto livre (legado)
     pot_label: str | None = None
     pot_volume_liters: float | None = None
     substrate: str | None = None
@@ -35,7 +36,8 @@ class PlantUpdate(BaseModel):
     harvest_date: date | None = None
     expected_harvest_days: int | None = None
     is_active: bool | None = None
-    grow_label: str | None = None
+    grow_id: uuid.UUID | None = None    # vínculo relacional com grows
+    grow_label: str | None = None       # fallback texto livre (legado)
     pot_label: str | None = None
     pot_volume_liters: float | None = None
     substrate: str | None = None
@@ -54,6 +56,7 @@ class PlantResponse(BaseModel):
     harvest_date: date | None
     expected_harvest_days: int | None
     is_active: bool
+    grow_id: uuid.UUID | None
     grow_label: str | None
     pot_label: str | None
     pot_volume_liters: float | None

@@ -17,6 +17,10 @@ class Plant(Base, TimestampMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    # Vínculo opcional com um grow registrado. SET NULL ao deletar o grow.
+    grow_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grows.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     strain_name: Mapped[str] = mapped_column(String(100), nullable=False)
     strain_type: Mapped[str] = mapped_column(String(20), default="photo", nullable=False)
