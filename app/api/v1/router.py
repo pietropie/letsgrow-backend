@@ -12,6 +12,7 @@ from app.api.v1 import (
     sensors,
     strains,
     uploads,
+    users,
 )
 
 api_router = APIRouter()
@@ -21,6 +22,7 @@ api_router.include_router(admin_users.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_strains.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_stats.router, prefix="/admin", tags=["admin"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(plants.router, prefix="/plants", tags=["plants"])
 api_router.include_router(strains.router, prefix="/strains", tags=["strains"])
 api_router.include_router(sensors.router, prefix="/sensors", tags=["sensors"])

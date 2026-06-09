@@ -2,7 +2,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -21,6 +21,7 @@ from app.schemas.plant import (
 )
 from app.schemas.common import MessageResponse
 from app.services.auth import get_current_user
+from app.services.subscription import check_plant_limit
 
 router = APIRouter()
 
@@ -194,6 +195,15 @@ async def create_plant(
     db: AsyncSession = Depends(get_db),
 ):
     """Cria uma nova planta vinculada diretamente ao usuário."""
+    # Verifica limite de plantas do plano antes de criar
+    count_result = await db.execute(
+        select(func.count(Plant.id)).where(
+            Plant.user_id == current_user.id,
+            Plant.is_active == True,
+        )
+    )
+    check_plant_limit(current_user, count_result.scalar_one())
+
     plant = Plant(user_id=current_user.id, **body.model_dump())
     db.add(plant)
     await db.commit()

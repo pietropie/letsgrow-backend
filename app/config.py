@@ -93,11 +93,14 @@ class Settings(BaseSettings):
     # Subscription plan limits
     FREE_MAX_GROWS: int = 1
     FREE_MAX_POTS_PER_GROW: int = 3
+    FREE_MAX_PLANTS: int = 3
     FREE_AI_QUERIES_PER_MONTH: int = 10
     GROWER_MAX_GROWS: int = 3
     GROWER_MAX_POTS_PER_GROW: int = 8
+    GROWER_MAX_PLANTS: int = 10
     PRO_MAX_GROWS: int = 9999
     PRO_MAX_POTS_PER_GROW: int = 9999
+    PRO_MAX_PLANTS: int = 9999
 
 
 @lru_cache

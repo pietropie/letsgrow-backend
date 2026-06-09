@@ -51,6 +51,7 @@ class UserResponse(BaseModel):
     email: str
     username: str
     full_name: str | None
+    avatar_url: str | None
     plan: str
     plan_expires_at: datetime | None
     is_active: bool

@@ -25,6 +25,8 @@ class User(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     # Subscription
     plan: Mapped[str] = mapped_column(String(20), default="free", nullable=False)
     plan_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
