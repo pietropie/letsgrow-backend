@@ -33,6 +33,38 @@ class Grow(Base, TimestampMixin):
     tent_height_cm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lighting_watts: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # --- Iluminação ---
+    # led_quantum_board | led_cob | hps_hid | cmh | fluorescent | other
+    light_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    light_distance_cm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # "18/6" | "12/12" | "20/4" | "24/0" | "custom"
+    photoperiod_hours: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    light_leak_controlled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # --- Ventilação ---
+    # inline_fan | axial_fan | pc_fans | none
+    exhaust_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    carbon_filter: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # active_fan | passive | none
+    intake_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    internal_circulation_fans: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    negative_pressure: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # --- Controle climático ---
+    air_conditioning: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    dehumidifier: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    humidifier: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    heater: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # --- Substrato ---
+    # fabric | plastic | air_pot | other
+    pot_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # mineral_soil | coco | organic_supersoil | hydro_dwc | other
+    substrate_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    # --- Extensibilidade: sensores ---
+    has_environment_sensors: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Legado: Grow não tem mais back_populates em User (renomeado para `plants`)
