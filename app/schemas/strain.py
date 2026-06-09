@@ -30,6 +30,7 @@ class StrainResponse(BaseModel):
     flowering_days: int | None
     height_cm: str | None
     summary: str | None
+    image_url: str | None
     source_file: str
 
     model_config = {"from_attributes": True}

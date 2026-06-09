@@ -47,6 +47,9 @@ class Strain(Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # corpo da seção "## Resumo", truncado a ~600 chars
 
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # URL pública da foto da strain — usada como background no card do app mobile
+
     source_file: Mapped[str] = mapped_column(String(255), nullable=False)
     # caminho relativo do .md de origem (ex: "strains/gelato-41.md")
 

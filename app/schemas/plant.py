@@ -91,3 +91,5 @@ class PlantSummary(BaseModel):
     last_ppm: float | None = None
     last_watering_at: datetime | None = None
     last_watering_has_fert: bool = False
+    # Imagem de capa da strain — usada como background do PlantCard no app
+    strain_image_url: str | None = None

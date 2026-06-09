@@ -9,19 +9,22 @@ indexação se o .md correspondente também for alterado.
 
 Protegidos pelo mesmo X-Admin-Token de app/api/v1/admin.py.
 """
+import io
 import re
 import unicodedata
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.admin import require_admin_token
+from app.config import settings as cfg
 from app.database import get_db
 from app.models.strain import Strain
+from app.services.storage import BUCKET_STRAINS, _minio_public_secure, delete_object, get_minio_client
 
 router = APIRouter()
 
@@ -46,6 +49,7 @@ class StrainAdminItem(BaseModel):
     flowering_days: int | None
     height_cm: str | None
     summary: str | None
+    image_url: str | None
     source_file: str
     created_at: datetime
     updated_at: datetime
@@ -200,6 +204,93 @@ async def delete_strain(
     strain = await db.get(Strain, strain_id)
     if strain is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strain não encontrada")
+    # Remove imagem do MinIO se existir
+    if strain.image_url:
+        _delete_strain_image_from_storage(strain_id)
     await db.delete(strain)
+    await db.commit()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/strains/{strain_id}/image — upload de foto da strain
+# ---------------------------------------------------------------------------
+
+def _strain_object_key(strain_id: uuid.UUID) -> str:
+    return f"{strain_id}/cover.jpg"
+
+
+def _strain_public_url(strain_id: uuid.UUID) -> str:
+    endpoint = cfg.MINIO_PUBLIC_ENDPOINT or cfg.MINIO_ENDPOINT
+    secure = _minio_public_secure(cfg)
+    scheme = "https" if secure else "http"
+    return f"{scheme}://{endpoint}/{BUCKET_STRAINS}/{_strain_object_key(strain_id)}"
+
+
+def _delete_strain_image_from_storage(strain_id: uuid.UUID) -> None:
+    delete_object(BUCKET_STRAINS, _strain_object_key(strain_id))
+
+
+@router.post("/strains/{strain_id}/image", response_model=StrainAdminItem)
+async def upload_strain_image(
+    strain_id: uuid.UUID,
+    file: UploadFile = File(..., description="Imagem JPG/PNG da strain (max 10MB)"),
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Faz upload da imagem de capa de uma strain diretamente pelo painel admin.
+    O arquivo é enviado como multipart/form-data e salvo no MinIO.
+    A URL pública é gravada em strain.image_url.
+    """
+    strain = await db.get(Strain, strain_id)
+    if strain is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strain não encontrada")
+
+    # Valida content_type
+    allowed = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+    ct = (file.content_type or "").lower()
+    if ct not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Tipo de arquivo não suportado: {ct}. Use JPG, PNG ou WebP.",
+        )
+
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:  # 10MB
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Imagem muito grande — máximo 10MB.",
+        )
+
+    object_key = _strain_object_key(strain_id)
+    client = get_minio_client()
+    client.put_object(
+        BUCKET_STRAINS,
+        object_key,
+        data=io.BytesIO(contents),
+        length=len(contents),
+        content_type=ct or "image/jpeg",
+    )
+
+    strain.image_url = _strain_public_url(strain_id)
+    await db.commit()
+    await db.refresh(strain)
+    return strain
+
+
+@router.delete("/strains/{strain_id}/image", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_strain_image(
+    strain_id: uuid.UUID,
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a imagem de capa de uma strain."""
+    strain = await db.get(Strain, strain_id)
+    if strain is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strain não encontrada")
+
+    _delete_strain_image_from_storage(strain_id)
+    strain.image_url = None
     await db.commit()
     return None

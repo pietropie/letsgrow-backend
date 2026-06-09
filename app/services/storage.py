@@ -7,6 +7,7 @@ from app.config import get_settings
 
 BUCKET_EVENTS = "events"
 BUCKET_AVATARS = "avatars"
+BUCKET_STRAINS = "strain-images"
 _PRESIGN_EXPIRY_SECONDS = 3600  # 1h para upload, 24h para download
 
 
@@ -63,7 +64,7 @@ def get_minio_presign_client() -> Minio:
 def ensure_buckets() -> None:
     """Cria os buckets necessários se não existirem. Chamado no lifespan."""
     client = get_minio_client()
-    for bucket in (BUCKET_EVENTS, BUCKET_AVATARS):
+    for bucket in (BUCKET_EVENTS, BUCKET_AVATARS, BUCKET_STRAINS):
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
 

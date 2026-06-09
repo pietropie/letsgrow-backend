@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.event import GrowEvent
 from app.models.plant import Plant
+from app.models.strain import Strain
 from app.models.user import User
 from app.schemas.event import EventAnalysisResponse, EventCreate, EventResponse, EventUpdate
 from app.schemas.plant import (
@@ -150,6 +151,18 @@ async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary
         and last_watering.is_flush is not True
     )
 
+    # Busca imagem da strain — falha silenciosa (sem imagem é ok)
+    strain_image_url: str | None = None
+    if plant.strain_name:
+        strain_result = await db.execute(
+            select(Strain.image_url).where(
+                func.lower(Strain.name) == func.lower(plant.strain_name)
+            ).limit(1)
+        )
+        row = strain_result.one_or_none()
+        if row:
+            strain_image_url = row[0]
+
     return PlantSummary(
         plant_id=plant.id,
         last_temperature_c=last_temp,
@@ -159,6 +172,7 @@ async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary
         last_ppm=last_ppm,
         last_watering_at=last_watering_at,
         last_watering_has_fert=last_watering_has_fert,
+        strain_image_url=strain_image_url,
     )
 
 
