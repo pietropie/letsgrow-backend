@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Constantes de enum (documentam os valores aceitos)
@@ -18,7 +18,7 @@ SubstrateType = Literal["mineral_soil", "coco", "organic_supersoil", "hydro_dwc"
 class GrowCreate(BaseModel):
     name: str
     grow_type: str = "indoor"
-    start_date: date
+    start_date: date = Field(default_factory=date.today)
     # Dimensões da tenda
     tent_width_cm: int | None = None
     tent_depth_cm: int | None = None
