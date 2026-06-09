@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 
 from minio import Minio
@@ -8,6 +9,18 @@ from app.config import get_settings
 BUCKET_EVENTS = "events"
 BUCKET_AVATARS = "avatars"
 BUCKET_STRAINS = "strain-images"
+
+# Política de leitura pública — permite acesso anônimo às imagens de strain
+# via URL direta (sem presign). Aplicada ao BUCKET_STRAINS em ensure_buckets().
+_STRAIN_PUBLIC_POLICY = json.dumps({
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"AWS": "*"},
+        "Action": ["s3:GetObject"],
+        "Resource": [f"arn:aws:s3:::{BUCKET_STRAINS}/*"],
+    }],
+})
 _PRESIGN_EXPIRY_SECONDS = 3600  # 1h para upload, 24h para download
 
 
@@ -64,9 +77,16 @@ def get_minio_presign_client() -> Minio:
 def ensure_buckets() -> None:
     """Cria os buckets necessários se não existirem. Chamado no lifespan."""
     client = get_minio_client()
-    for bucket in (BUCKET_EVENTS, BUCKET_AVATARS, BUCKET_STRAINS):
+    for bucket in (BUCKET_EVENTS, BUCKET_AVATARS):
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
+    # strain-images precisa de leitura pública (URLs diretas, sem presign)
+    if not client.bucket_exists(BUCKET_STRAINS):
+        client.make_bucket(BUCKET_STRAINS)
+    try:
+        client.set_bucket_policy(BUCKET_STRAINS, _STRAIN_PUBLIC_POLICY)
+    except Exception:
+        pass  # não bloqueia o startup se MinIO ainda não aceitou a policy
 
 
 def presign_upload(bucket: str, object_key: str, content_type: str = "image/jpeg") -> str:
