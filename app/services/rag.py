@@ -11,7 +11,7 @@ from app.models.grow import Grow
 from app.models.knowledge import AIConversation, KnowledgeChunk
 from app.models.plant import Plant
 from app.models.sensor import SensorDevice, SensorReading
-from app.rag.prompts import build_system_prompt, build_grow_context
+from app.rag.prompts import build_system_prompt, build_grow_context, build_plant_context
 from app.rag.retriever import retrieve_chunks
 from app.services import ai_provider
 
@@ -120,15 +120,26 @@ async def chat(
     conversation: AIConversation,
     user_message: str,
     grow: Grow | None = None,
+    plant: Plant | None = None,
 ) -> str:
-    # Build grow context summary (compact — saves tokens)
-    grow_ctx = await build_grow_context(db, grow) if grow else ""
+    # Se uma planta específica foi fornecida, usa contexto detalhado dela
+    # (incluindo ambiente do grow vinculado, se houver). Caso contrário,
+    # usa o contexto geral do grow selecionado na conversa.
+    plant_ctx = ""
+    grow_ctx = ""
+    if plant:
+        plant_grow: Grow | None = None
+        if plant.grow_id:
+            plant_grow = await db.get(Grow, plant.grow_id)
+        plant_ctx = await build_plant_context(db, plant, plant_grow)
+    elif grow:
+        grow_ctx = await build_grow_context(db, grow)
 
     # Retrieve relevant knowledge chunks
     chunks = await retrieve_chunks(db, user_message, grow, top_k=4)
     rag_context = "\n\n---\n\n".join(c.content for c in chunks)
 
-    system_prompt = build_system_prompt(grow_ctx, rag_context)
+    system_prompt = build_system_prompt(grow_ctx, rag_context, plant_ctx)
 
     # Build message history (last 6 messages to save tokens)
     history = conversation.messages[-6:] if conversation.messages else []
@@ -363,13 +374,77 @@ def invalidate_plant_tip_cache(plant_id) -> None:
 # visão (DeepSeek/Z.ai) vão simplesmente falhar na chamada — é o admin quem
 # escolhe o provider/modelo em /admin/ai-panel, então recomendamos Gemini.
 
-def _build_photo_analysis_prompt(plant: Plant, event) -> str:
-    notes = f"\nObservações do cultivador: {event.notes}" if event.notes else ""
+def _build_photo_analysis_prompt(plant: Plant, event, grow: Grow | None = None) -> str:
+    """Constrói o prompt de análise multimodal com contexto completo da planta e grow."""
+    from datetime import date as _date
+
+    today = _date.today()
+
+    # ── Contexto da planta ───────────────────────────────────────────────────
+    genetics_str = f" ({plant.genetics})" if plant.genetics else ""
+    ctx_lines = [f"Planta: {plant.strain_name}{genetics_str} | Tipo: {plant.strain_type}"]
+
+    phase_detail = plant.current_phase
+    if plant.flip_date and plant.current_phase == "flower":
+        flip_days = (today - plant.flip_date).days
+        phase_detail = f"floração — {flip_days} dias de flora"
+        if plant.expected_harvest_days:
+            remaining = plant.expected_harvest_days - flip_days
+            if remaining > 0:
+                phase_detail += f" (previsão: ~{remaining} dias restantes)"
+    elif plant.germination_date:
+        germ_days = (today - plant.germination_date).days
+        phase_detail = f"{plant.current_phase} — dia {germ_days}"
+
+    ctx_lines.append(f"Fase: {phase_detail}")
+    ctx_lines.append(f"Evento registrado: {event.event_type}")
+
+    if plant.substrate:
+        ctx_lines.append(f"Substrato: {plant.substrate}")
+    if plant.pot_volume_liters:
+        ctx_lines.append(f"Volume do vaso: {plant.pot_volume_liters}L")
+
+    # ── Dados do evento analisado ────────────────────────────────────────────
+    event_data = []
+    if event.ppm:
+        event_data.append(f"PPM: {event.ppm}")
+    if event.ph_in:
+        event_data.append(f"pH entrada: {event.ph_in}")
+    if event.ph_out:
+        event_data.append(f"pH saída: {event.ph_out}")
+    if event.temperature_c:
+        event_data.append(f"Temperatura: {event.temperature_c}°C")
+    if event.humidity_rh:
+        event_data.append(f"Umidade: {event.humidity_rh}%")
+    if event_data:
+        ctx_lines.append(f"Medições deste evento: {' | '.join(event_data)}")
+    if event.notes:
+        ctx_lines.append(f"Observações do cultivador: {event.notes}")
+
+    # ── Ambiente do grow ─────────────────────────────────────────────────────
+    if grow:
+        env_parts = []
+        if grow.lighting_watts:
+            light_str = f"{grow.lighting_watts}W"
+            if grow.light_type:
+                light_str += f" {grow.light_type}"
+            env_parts.append(light_str)
+        if grow.photoperiod_hours:
+            env_parts.append(f"fotoperíodo {grow.photoperiod_hours}")
+        if grow.tent_width_cm:
+            env_parts.append(f"tent {grow.tent_width_cm}×{grow.tent_depth_cm} cm")
+        if grow.substrate_type:
+            env_parts.append(f"substrato {grow.substrate_type}")
+        if env_parts:
+            ctx_lines.append(f"Ambiente: {' | '.join(env_parts)}")
+
+    plant_context = "\n".join(ctx_lines)
+
     return (
-        "Você é Bob, consultor especialista em cultivo de cannabis com linguagem acessível e direta. "
-        f"Analise as fotos enviadas da planta {plant.strain_name} "
-        f"(fase: {plant.current_phase}, evento registrado: {event.event_type}).{notes}\n\n"
-        "Responda SOMENTE com um objeto JSON válido — sem texto antes ou depois do JSON:\n"
+        "Você é Bob, consultor especialista em cultivo de cannabis com linguagem acessível e direta.\n\n"
+        f"## Contexto do Cultivo\n{plant_context}\n\n"
+        "## Tarefa\n"
+        "Analise as fotos enviadas acima e responda SOMENTE com um objeto JSON válido — sem texto antes ou depois do JSON:\n"
         '{\n'
         '  "status": "saudavel" ou "atencao" ou "critico",\n'
         '  "resumo": "1 a 2 frases descrevendo o estado geral da planta",\n'
@@ -378,16 +453,17 @@ def _build_photo_analysis_prompt(plant: Plant, event) -> str:
         '  "observacao_foto": null ou "nota caso a qualidade/angulo das fotos limite a analise"\n'
         '}\n\n'
         "Regras:\n"
-        "- Liste SOMENTE o que é claramente visível nas imagens (sem especulação).\n"
-        "- Se a planta parecer saudável, 'problemas' deve ser lista vazia [].\n"
+        "- Liste SOMENTE o que e claramente visivel nas imagens (sem especulacao).\n"
+        "- Use o contexto do cultivo acima para dar recomendacoes mais precisas.\n"
+        "- Se a planta parecer saudavel, 'problemas' deve ser lista vazia [].\n"
         "- Use linguagem simples que um cultivador iniciante entenda.\n"
-        "- Se a qualidade das fotos não permitir análise confiável, indique em 'observacao_foto'."
+        "- Se a qualidade das fotos nao permitir analise confiavel, indique em 'observacao_foto'."
     )
 
 
 def _read_photo_object(object_key: str) -> tuple[bytes, str]:
-    """Lê os bytes de uma foto direto do MinIO (client interno — roda em thread,
-    pois o SDK do MinIO é síncrono)."""
+    """Le os bytes de uma foto direto do MinIO (client interno - roda em thread,
+    pois o SDK do MinIO e sincrono)."""
     from app.services.storage import BUCKET_EVENTS, get_minio_client
 
     response = get_minio_client().get_object(BUCKET_EVENTS, object_key)
@@ -400,23 +476,28 @@ def _read_photo_object(object_key: str) -> tuple[bytes, str]:
         response.release_conn()
 
 
-async def analyze_event_photos(db: AsyncSession, *, plant: Plant, event) -> str:
-    """Envia as fotos de um evento do diário para o LLM multimodal configurado
-    e retorna uma análise em texto (problemas visíveis, estágio, recomendações)."""
+async def analyze_event_photos(db: AsyncSession, *, plant: Plant, event) -> dict:
+    """Envia as fotos de um evento do diario para o LLM multimodal configurado
+    e retorna dict estruturado com status, resumo, problemas e recomendacoes."""
     import asyncio
     import base64
 
     from langchain_core.messages import HumanMessage
 
+    # Carrega o grow vinculado a planta para enriquecer o prompt
+    grow: Grow | None = None
+    if plant.grow_id:
+        grow = await db.get(Grow, plant.grow_id)
+
     content_blocks: list[dict] = [
-        {"type": "text", "text": _build_photo_analysis_prompt(plant, event)}
+        {"type": "text", "text": _build_photo_analysis_prompt(plant, event, grow)}
     ]
 
     for object_key in (event.photo_keys or [])[:6]:
         try:
             data, content_type = await asyncio.to_thread(_read_photo_object, object_key)
         except Exception as exc:
-            logger.warning("Falha ao baixar foto %s para análise de IA: %s", object_key, exc)
+            logger.warning("Falha ao baixar foto %s para analise de IA: %s", object_key, exc)
             continue
         b64 = base64.b64encode(data).decode("ascii")
         content_blocks.append({
@@ -425,13 +506,13 @@ async def analyze_event_photos(db: AsyncSession, *, plant: Plant, event) -> str:
         })
 
     if len(content_blocks) == 1:
-        raise RuntimeError("Não foi possível carregar nenhuma das fotos deste evento para análise.")
+        raise RuntimeError("Nao foi possivel carregar nenhuma das fotos deste evento para analise.")
 
     _, llm, _ = await get_ai_context(db)
     response = await llm.ainvoke([HumanMessage(content=content_blocks)])
     text = response.content
 
-    # Tenta extrair JSON da resposta (o LLM às vezes envolve em ```json ... ```)
+    # Tenta extrair JSON da resposta (o LLM as vezes envolve em ```json ... ```)
     import json as _json
     try:
         start = text.find('{')
@@ -439,7 +520,7 @@ async def analyze_event_photos(db: AsyncSession, *, plant: Plant, event) -> str:
         if start == -1 or end == 0:
             raise ValueError("Nenhum objeto JSON encontrado na resposta do LLM")
         data = _json.loads(text[start:end])
-        # Garante que os campos obrigatórios existem com tipos corretos
+        # Garante que os campos obrigatorios existem com tipos corretos
         return {
             "status": str(data.get("status", "atencao")),
             "resumo": str(data.get("resumo", text[:200])),
@@ -448,11 +529,11 @@ async def analyze_event_photos(db: AsyncSession, *, plant: Plant, event) -> str:
             "observacao_foto": data.get("observacao_foto") or None,
         }
     except Exception as parse_err:
-        logger.warning("Falha ao parsear JSON do Bob (%s) — usando resposta raw como resumo", parse_err)
+        logger.warning("Falha ao parsear JSON do Bob (%s) -- usando resposta raw como resumo", parse_err)
         return {
             "status": "atencao",
             "resumo": text[:300],
             "problemas": [],
             "recomendacoes": [],
-            "observacao_foto": "Resposta não estruturada — exibindo texto original.",
+            "observacao_foto": "Resposta nao estruturada -- exibindo texto original.",
         }

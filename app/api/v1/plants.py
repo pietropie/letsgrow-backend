@@ -23,7 +23,7 @@ from app.schemas.plant import (
 )
 from app.schemas.common import MessageResponse
 from app.services.auth import get_current_user
-from app.services.subscription import check_plant_limit
+from app.services.subscription import check_ai_limit, check_plant_limit
 
 router = APIRouter()
 
@@ -470,6 +470,9 @@ async def analyze_event(
 ):
     """Analisa as fotos de um evento do diário com IA multimodal (requer um
     provedor com suporte a visão configurado em /admin/ai-panel — ex.: Gemini)."""
+    # Verifica limite de IA do plano antes de consumir tokens
+    check_ai_limit(current_user)
+
     plant = await _get_plant_or_404(plant_id, current_user.id, db)
     result = await db.execute(
         select(GrowEvent).where(GrowEvent.id == event_id, GrowEvent.plant_id == plant_id)
@@ -495,6 +498,10 @@ async def analyze_event(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Falha ao analisar fotos com IA: {exc}",
         )
+
+    # Incrementa contador de uso de IA (planos com limite: free, jardineiro)
+    current_user.ai_queries_this_month += 1
+    await db.commit()
 
     return EventAnalysisResponse(
         event_id=event.id,

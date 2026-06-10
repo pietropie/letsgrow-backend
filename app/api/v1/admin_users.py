@@ -27,7 +27,7 @@ from app.models.user import User
 
 router = APIRouter()
 
-PLAN_CHOICES = ("free", "grower", "pro")
+PLAN_CHOICES = ("free", "jardineiro", "cultivador", "grower_pro", "grower", "pro")
 
 
 class UserListItem(BaseModel):
@@ -61,7 +61,7 @@ class UserDetail(UserListItem):
 
 
 class UserUpdateIn(BaseModel):
-    plan: str | None = Field(default=None, description="free | grower | pro")
+    plan: str | None = Field(default=None, description="free | jardineiro | cultivador | grower_pro")
     plan_expires_at: datetime | None = Field(
         default=None, description="Use null para manter; envie uma data para definir, ou omita para não alterar"
     )
@@ -203,13 +203,19 @@ async def list_plan_limits(_: None = Depends(require_admin_token)):
             ai_queries_per_month=settings.FREE_AI_QUERIES_PER_MONTH,
         ),
         PlanLimits(
-            plan="grower",
-            max_grows=settings.GROWER_MAX_GROWS,
-            max_pots_per_grow=settings.GROWER_MAX_POTS_PER_GROW,
+            plan="jardineiro",
+            max_grows=settings.JARDINEIRO_MAX_GROWS,
+            max_pots_per_grow=settings.JARDINEIRO_MAX_POTS_PER_GROW,
+            ai_queries_per_month=settings.JARDINEIRO_AI_QUERIES_PER_MONTH,
+        ),
+        PlanLimits(
+            plan="cultivador",
+            max_grows=settings.CULTIVADOR_MAX_GROWS,
+            max_pots_per_grow=settings.CULTIVADOR_MAX_POTS_PER_GROW,
             ai_queries_per_month=None,
         ),
         PlanLimits(
-            plan="pro",
+            plan="grower_pro",
             max_grows=settings.PRO_MAX_GROWS,
             max_pots_per_grow=settings.PRO_MAX_POTS_PER_GROW,
             ai_queries_per_month=None,

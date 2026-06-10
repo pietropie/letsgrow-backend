@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.grow import Grow
 from app.models.knowledge import AIConversation
+from app.models.plant import Plant
 from app.models.user import User
 from app.services.auth import get_current_user
 from app.services.rag import chat
@@ -20,6 +21,7 @@ router = APIRouter()
 class ChatRequest(BaseModel):
     message: str
     grow_id: uuid.UUID | None = None
+    plant_id: uuid.UUID | None = None
     conversation_id: uuid.UUID | None = None
 
 
@@ -54,9 +56,17 @@ async def chat_endpoint(
         )
         grow = grow_result.scalar_one_or_none()
         if not grow:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow nao encontrado")
 
-    # Load or create conversation
+    plant = None
+    if body.plant_id:
+        plant_result = await db.execute(
+            select(Plant).where(Plant.id == body.plant_id, Plant.user_id == current_user.id)
+        )
+        plant = plant_result.scalar_one_or_none()
+        if not plant:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Planta nao encontrada")
+
     conversation = None
     if body.conversation_id:
         result = await db.execute(
@@ -77,9 +87,8 @@ async def chat_endpoint(
         db.add(conversation)
         await db.flush()
 
-    reply = await chat(db, conversation, body.message, grow)
+    reply = await chat(db, conversation, body.message, grow, plant)
 
-    # Append messages to conversation history
     now_iso = datetime.now(timezone.utc).isoformat()
     conversation.messages = [
         *conversation.messages,
@@ -87,10 +96,7 @@ async def chat_endpoint(
         {"role": "assistant", "content": reply, "timestamp": now_iso},
     ]
 
-    # Track monthly usage for free users
-    if current_user.plan == "free":
-        current_user.ai_queries_this_month += 1
-
+    current_user.ai_queries_this_month += 1
     await db.commit()
 
     return ChatResponse(conversation_id=conversation.id, reply=reply)
@@ -135,5 +141,5 @@ async def get_conversation(
     )
     conversation = result.scalar_one_or_none()
     if not conversation:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversa não encontrada")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversa nao encontrada")
     return conversation

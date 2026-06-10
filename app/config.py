@@ -91,16 +91,32 @@ class Settings(BaseSettings):
     MINIO_PUBLIC_SECURE: str = ""
 
     # Subscription plan limits
+    # free — isca de aquisição
     FREE_MAX_GROWS: int = 1
     FREE_MAX_POTS_PER_GROW: int = 3
-    FREE_MAX_PLANTS: int = 3
-    FREE_AI_QUERIES_PER_MONTH: int = 10
-    GROWER_MAX_GROWS: int = 3
-    GROWER_MAX_POTS_PER_GROW: int = 8
-    GROWER_MAX_PLANTS: int = 10
+    FREE_MAX_PLANTS: int = 1
+    FREE_AI_QUERIES_PER_MONTH: int = 1
+
+    # jardineiro — cultivador caseiro (R$24,90/mês)
+    JARDINEIRO_MAX_GROWS: int = 1
+    JARDINEIRO_MAX_POTS_PER_GROW: int = 3
+    JARDINEIRO_MAX_PLANTS: int = 2
+    JARDINEIRO_AI_QUERIES_PER_MONTH: int = 4   # ~1/semana
+
+    # cultivador — grower mais avançado (R$44,90/mês)
+    CULTIVADOR_MAX_GROWS: int = 2
+    CULTIVADOR_MAX_POTS_PER_GROW: int = 10
+    CULTIVADOR_MAX_PLANTS: int = 8
+
+    # grower_pro — profissional (R$89,90/mês)
     PRO_MAX_GROWS: int = 9999
     PRO_MAX_POTS_PER_GROW: int = 9999
     PRO_MAX_PLANTS: int = 9999
+
+    # legado — mapeados internamente para cultivador/grower_pro em subscription.py
+    GROWER_MAX_GROWS: int = 2
+    GROWER_MAX_POTS_PER_GROW: int = 10
+    GROWER_MAX_PLANTS: int = 8
 
 
 @lru_cache
