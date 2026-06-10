@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
+from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,9 +27,25 @@ from app.services.auth import (
     hash_password,
     verify_password,
 )
+from app.services.email import send_password_reset_email
+from app.services.redis_client import create_otp, delete_otp, verify_otp
 
 router = APIRouter()
 
+
+# ─── Esquemas de recuperação de senha ────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
+
+
+# ─── Endpoints de autenticação ───────────────────────────────────────────────
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
@@ -122,7 +139,6 @@ async def google_login(body: OAuthGoogleRequest, db: AsyncSession = Depends(get_
     email = payload.get("email", "")
     full_name = payload.get("name")
 
-    # Find by oauth_id first, then by email
     result = await db.execute(
         select(User).where(User.oauth_provider == "google", User.oauth_id == google_sub)
     )
@@ -164,3 +180,62 @@ async def google_login(body: OAuthGoogleRequest, db: AsyncSession = Depends(get_
         access_token=create_access_token(user.id),
         refresh_token=create_refresh_token(user.id),
     )
+
+
+# ─── Recuperação de senha ─────────────────────────────────────────────────────
+
+@router.post("/forgot-password", status_code=status.HTTP_204_NO_CONTENT)
+async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Gera um código OTP de 6 dígitos, armazena no Redis (TTL 15min) e
+    envia e-mail via Resend.
+
+    Sempre responde 204 (sem revelar se o e-mail existe ou não).
+    """
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    # Resposta idêntica independente do e-mail existir (evita enumeração)
+    if not user or not user.is_active:
+        return
+
+    code = await create_otp(str(body.email))
+
+    try:
+        await send_password_reset_email(to_email=str(body.email), code=code)
+    except Exception:
+        # Não vazar erros de e-mail para o cliente
+        pass
+
+
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Valida o OTP e atualiza a senha do usuário.
+    """
+    if len(body.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A senha deve ter ao menos 8 caracteres",
+        )
+
+    valid = await verify_otp(str(body.email), body.code)
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Código inválido ou expirado",
+        )
+
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Código inválido ou expirado",
+        )
+
+    user.hashed_password = hash_password(body.new_password)
+    await db.commit()
+
+    await delete_otp(str(body.email))

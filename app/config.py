@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     PRO_MAX_POTS_PER_GROW: int = 9999
     PRO_MAX_PLANTS: int = 9999
 
+    # Resend (e-mail transacional)
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "noreply@letsgrow.app"
+
     # legado — mapeados internamente para cultivador/grower_pro em subscription.py
     GROWER_MAX_GROWS: int = 2
     GROWER_MAX_POTS_PER_GROW: int = 10
