@@ -1,9 +1,11 @@
 """
-Utilitário Redis para armazenamento de OTPs de recuperação de senha.
+Utilitário Redis para armazenamento de OTPs (recuperação de senha e verificação de email).
 
-Chave: pwd_reset:{email}
-Valor: código de 6 dígitos (str)
-TTL: 900 segundos (15 minutos)
+Recuperação de senha:
+  Chave: pwd_reset:{email}    TTL: 900s (15 min)
+
+Verificação de email:
+  Chave: email_verify:{email}  TTL: 900s (15 min)
 """
 
 import random
@@ -14,6 +16,7 @@ import redis.asyncio as aioredis
 from app.config import settings
 
 _redis: aioredis.Redis | None = None
+OTP_TTL = 900  # 15 minutos
 
 
 def _get_redis() -> aioredis.Redis:
@@ -23,30 +26,39 @@ def _get_redis() -> aioredis.Redis:
     return _redis
 
 
-OTP_TTL = 900  # 15 minutos
-_OTP_PREFIX = "pwd_reset:"
+def _gen_code() -> str:
+    return "".join(random.choices(string.digits, k=6))
 
 
-def _key(email: str) -> str:
-    return f"{_OTP_PREFIX}{email.lower()}"
-
+# ─── Recuperação de senha ─────────────────────────────────────────────────────
 
 async def create_otp(email: str) -> str:
-    """Gera e armazena um OTP de 6 dígitos. Retorna o código."""
-    code = "".join(random.choices(string.digits, k=6))
-    r = _get_redis()
-    await r.set(_key(email), code, ex=OTP_TTL)
+    code = _gen_code()
+    await _get_redis().set(f"pwd_reset:{email.lower()}", code, ex=OTP_TTL)
     return code
 
 
 async def verify_otp(email: str, code: str) -> bool:
-    """Valida o OTP. Retorna True se correto (mas NÃO deleta — chamar delete_otp após usar)."""
-    r = _get_redis()
-    stored = await r.get(_key(email))
+    stored = await _get_redis().get(f"pwd_reset:{email.lower()}")
     return stored is not None and stored == code.strip()
 
 
 async def delete_otp(email: str) -> None:
-    """Remove o OTP do Redis (chamar após reset bem-sucedido)."""
-    r = _get_redis()
-    await r.delete(_key(email))
+    await _get_redis().delete(f"pwd_reset:{email.lower()}")
+
+
+# ─── Verificação de email ─────────────────────────────────────────────────────
+
+async def create_email_verification_otp(email: str) -> str:
+    code = _gen_code()
+    await _get_redis().set(f"email_verify:{email.lower()}", code, ex=OTP_TTL)
+    return code
+
+
+async def verify_email_verification_otp(email: str, code: str) -> bool:
+    stored = await _get_redis().get(f"email_verify:{email.lower()}")
+    return stored is not None and stored == code.strip()
+
+
+async def delete_email_verification_otp(email: str) -> None:
+    await _get_redis().delete(f"email_verify:{email.lower()}")

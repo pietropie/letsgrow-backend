@@ -16,8 +16,11 @@ from app.schemas.auth import (
     OAuthGoogleRequest,
     RefreshRequest,
     RegisterRequest,
+    RegisterResponse,
+    ResendVerificationRequest,
     TokenResponse,
     UserResponse,
+    VerifyEmailRequest,
 )
 from app.services.auth import (
     create_access_token,
@@ -27,13 +30,24 @@ from app.services.auth import (
     hash_password,
     verify_password,
 )
-from app.services.email import send_password_reset_email
-from app.services.redis_client import create_otp, delete_otp, verify_otp
+from app.services.email import (
+    send_password_reset_email,
+    send_verification_email,
+    send_welcome_email,
+)
+from app.services.redis_client import (
+    create_email_verification_otp,
+    create_otp,
+    delete_email_verification_otp,
+    delete_otp,
+    verify_email_verification_otp,
+    verify_otp,
+)
 
 router = APIRouter()
 
 
-# ─── Esquemas de recuperação de senha ────────────────────────────────────────
+# ─── Schemas locais ───────────────────────────────────────────────────────────
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
@@ -45,10 +59,14 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
-# ─── Endpoints de autenticação ───────────────────────────────────────────────
+# ─── Cadastro ─────────────────────────────────────────────────────────────────
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Cria a conta com is_verified=False e envia OTP por email.
+    Retorna apenas o email — tokens só são emitidos após verificação.
+    """
     existing = await db.execute(
         select(User).where((User.email == body.email) | (User.username == body.username))
     )
@@ -60,16 +78,89 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         username=body.username,
         hashed_password=hash_password(body.password),
         full_name=body.full_name,
+        is_verified=False,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    code = await create_email_verification_otp(str(body.email))
+    try:
+        await send_verification_email(
+            to_email=str(body.email),
+            name=body.full_name or body.username,
+            code=code,
+        )
+    except Exception:
+        pass  # não bloqueia cadastro por falha de email
+
+    return RegisterResponse(email=str(body.email))
+
+
+# ─── Verificação de email ─────────────────────────────────────────────────────
+
+@router.post("/verify-email", response_model=TokenResponse)
+async def verify_email(body: VerifyEmailRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Valida o OTP, marca is_verified=True e emite tokens de acesso.
+    Também envia email de boas-vindas.
+    """
+    valid = await verify_email_verification_otp(str(body.email), body.code)
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Código inválido ou expirado",
+        )
+
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Código inválido ou expirado",
+        )
+
+    user.is_verified = True
+    await db.commit()
+    await delete_email_verification_otp(str(body.email))
+
+    # Boas-vindas (não bloqueia em caso de falha)
+    try:
+        await send_welcome_email(
+            to_email=str(body.email),
+            name=user.full_name or user.username,
+        )
+    except Exception:
+        pass
 
     return TokenResponse(
         access_token=create_access_token(user.id),
         refresh_token=create_refresh_token(user.id),
     )
 
+
+@router.post("/resend-verification", status_code=status.HTTP_204_NO_CONTENT)
+async def resend_verification(body: ResendVerificationRequest, db: AsyncSession = Depends(get_db)):
+    """Reenvia o OTP de verificação. Responde sempre 204."""
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    if not user or user.is_verified or not user.is_active:
+        return  # silencioso
+
+    code = await create_email_verification_otp(str(body.email))
+    try:
+        await send_verification_email(
+            to_email=str(body.email),
+            name=user.full_name or user.username,
+            code=code,
+        )
+    except Exception:
+        pass
+
+
+# ─── Login ────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
@@ -82,11 +173,29 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Conta inativa")
 
+    if not user.is_verified:
+        # Reenvia OTP automaticamente e informa o cliente
+        code = await create_email_verification_otp(str(user.email))
+        try:
+            await send_verification_email(
+                to_email=str(user.email),
+                name=user.full_name or user.username,
+                code=code,
+            )
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="email_not_verified",
+        )
+
     return TokenResponse(
         access_token=create_access_token(user.id),
         refresh_token=create_refresh_token(user.id),
     )
 
+
+# ─── Refresh ──────────────────────────────────────────────────────────────────
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
@@ -107,6 +216,8 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
 async def me(current_user: User = Depends(get_current_user)):
     return current_user
 
+
+# ─── Google OAuth ─────────────────────────────────────────────────────────────
 
 @router.post("/google", response_model=TokenResponse)
 async def google_login(body: OAuthGoogleRequest, db: AsyncSession = Depends(get_db)):
@@ -166,7 +277,7 @@ async def google_login(body: OAuthGoogleRequest, db: AsyncSession = Depends(get_
             hashed_password=None,
             oauth_provider="google",
             oauth_id=google_sub,
-            is_verified=True,
+            is_verified=True,  # Google já verificou o email
         )
         db.add(user)
 
@@ -175,6 +286,11 @@ async def google_login(body: OAuthGoogleRequest, db: AsyncSession = Depends(get_
 
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Conta inativa")
+
+    # Garante que contas Google existentes também ficam verificadas
+    if not user.is_verified:
+        user.is_verified = True
+        await db.commit()
 
     return TokenResponse(
         access_token=create_access_token(user.id),
@@ -186,33 +302,21 @@ async def google_login(body: OAuthGoogleRequest, db: AsyncSession = Depends(get_
 
 @router.post("/forgot-password", status_code=status.HTTP_204_NO_CONTENT)
 async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Gera um código OTP de 6 dígitos, armazena no Redis (TTL 15min) e
-    envia e-mail via Resend.
-
-    Sempre responde 204 (sem revelar se o e-mail existe ou não).
-    """
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
-    # Resposta idêntica independente do e-mail existir (evita enumeração)
     if not user or not user.is_active:
-        return
+        return  # resposta idêntica — evita enumeração
 
     code = await create_otp(str(body.email))
-
     try:
         await send_password_reset_email(to_email=str(body.email), code=code)
     except Exception:
-        # Não vazar erros de e-mail para o cliente
         pass
 
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
 async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Valida o OTP e atualiza a senha do usuário.
-    """
     if len(body.new_password) < 8:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -237,5 +341,4 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
 
     user.hashed_password = hash_password(body.new_password)
     await db.commit()
-
     await delete_otp(str(body.email))

@@ -14,7 +14,7 @@ class RegisterRequest(BaseModel):
     @classmethod
     def username_alphanumeric(cls, v: str) -> str:
         if not v.replace("_", "").replace("-", "").isalnum():
-            raise ValueError("Username deve conter apenas letras, números, _ ou -")
+            raise ValueError("Username deve conter apenas letras, numeros, _ ou -")
         if len(v) < 3 or len(v) > 50:
             raise ValueError("Username deve ter entre 3 e 50 caracteres")
         return v.lower()
@@ -23,8 +23,22 @@ class RegisterRequest(BaseModel):
     @classmethod
     def password_strength(cls, v: str) -> str:
         if len(v) < 8:
-            raise ValueError("Senha deve ter no mínimo 8 caracteres")
+            raise ValueError("Senha deve ter no minimo 8 caracteres")
         return v
+
+
+class RegisterResponse(BaseModel):
+    """Retornado pelo /register -- sem tokens (usuario precisa verificar o email primeiro)."""
+    email: str
+
+
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
 
 
 class LoginRequest(BaseModel):
