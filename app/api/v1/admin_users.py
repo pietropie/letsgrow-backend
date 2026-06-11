@@ -1,11 +1,9 @@
 """
-Endpoints administrativos — clientes & assinaturas.
+Endpoints administrativos -- clientes & assinaturas.
 
-Não existe uma tabela `Subscription` separada: o plano (`plan` /
-`plan_expires_at`) vive direto em `User`, e os limites por plano ficam em
-app/config.py (FREE_MAX_GROWS etc.). Estes endpoints permitem listar usuários,
-ver uso/contadores e ajustar plano manualmente (ex.: dar upgrade depois de um
-pagamento processado fora do app).
+O plano (plan / plan_expires_at) vive direto em User; limites por plano ficam
+em app/config.py. Estes endpoints listam usuarios, exibem uso e ajustam plano
+manualmente (upgrade/downgrade pos pagamento fora do app).
 
 Protegidos pelo mesmo X-Admin-Token de app/api/v1/admin.py.
 """
@@ -63,10 +61,12 @@ class UserDetail(UserListItem):
 class UserUpdateIn(BaseModel):
     plan: str | None = Field(default=None, description="free | jardineiro | cultivador | grower_pro")
     plan_expires_at: datetime | None = Field(
-        default=None, description="Use null para manter; envie uma data para definir, ou omita para não alterar"
+        default=None,
+        description="Use null para manter; envie uma data para definir"
     )
     clear_plan_expires_at: bool = Field(
-        default=False, description="Se true, zera plan_expires_at independente do valor acima (plano sem validade, ex: free)"
+        default=False,
+        description="Se true, zera plan_expires_at (plano sem validade)"
     )
     is_active: bool | None = None
 
@@ -83,7 +83,7 @@ async def list_users(
     _: None = Depends(require_admin_token),
     db: AsyncSession = Depends(get_db),
     search: str | None = Query(default=None, description="Filtra por e-mail, username ou nome"),
-    plan: str | None = Query(default=None, description="Filtra por plano: free | grower | pro"),
+    plan: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -110,7 +110,6 @@ async def list_users(
         count_stmt = count_stmt.where(User.is_active == is_active)
 
     total = (await db.execute(count_stmt)).scalar_one()
-
     stmt = stmt.order_by(User.created_at.desc()).limit(limit).offset(offset)
     users = (await db.execute(stmt)).scalars().all()
 
@@ -130,7 +129,7 @@ async def get_user_detail(
 ):
     user = await db.get(User, user_id)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado")
 
     grows_count = (
         await db.execute(select(func.count()).select_from(Grow).where(Grow.user_id == user_id))
@@ -163,14 +162,14 @@ async def update_user(
 ):
     user = await db.get(User, user_id)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado")
 
     if body.plan is not None:
         plan = body.plan.strip().lower()
         if plan not in PLAN_CHOICES:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"plan inválido — use um de: {', '.join(PLAN_CHOICES)}",
+                detail=f"plan invalido -- use um de: {', '.join(PLAN_CHOICES)}",
             )
         user.plan = plan
 
@@ -188,13 +187,28 @@ async def update_user(
     return await get_user_detail(user_id, None, db)  # type: ignore[arg-type]
 
 
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: uuid.UUID,
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove permanentemente o usuario e todos os seus dados.
+
+    Grows tem ondelete=CASCADE na FK, entao o banco apaga o resto em cascata.
+    Plants e AIConversations tem cascade definido no ORM do User.
+    """
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado")
+
+    await db.delete(user)
+    await db.commit()
+
+
 @router.get("/plans", response_model=list[PlanLimits])
 async def list_plan_limits(_: None = Depends(require_admin_token)):
-    """Limites por plano — hoje vêm de variáveis de ambiente (app/config.py).
-
-    Não são editáveis em runtime (exigiria migrar para uma tabela `plans`);
-    esta rota só dá visibilidade do que está configurado no servidor agora.
-    """
+    """Limites por plano -- configurados via variaveis de ambiente (app/config.py)."""
     return [
         PlanLimits(
             plan="free",
