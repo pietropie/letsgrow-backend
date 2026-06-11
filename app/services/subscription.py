@@ -1,13 +1,12 @@
 """
-Serviço de controle de limites de plano.
+Controle de limites de plano.
 
-Todos os limites vêm de config.py (variáveis de ambiente) — sem tabela no
-banco, sem redeploy para alterar. Para limites dinâmicos em runtime, migrar
-para uma tabela `plans` no futuro.
+Os limites agora vem do banco (tabela plan_configs), editavel via admin.
+Fallback para config.py se o cache ainda nao tiver sido populado.
 
 Planos: free | jardineiro | cultivador | grower_pro
-Legado (mantido por compatibilidade): grower → cultivador, pro → grower_pro
-Expiração: se plan_expires_at < agora, o plano pago é tratado como free.
+Legado (mantido por compatibilidade): grower -> cultivador, pro -> grower_pro
+Expiracao: se plan_expires_at < agora, o plano pago e tratado como free.
 """
 from datetime import datetime, timezone
 
@@ -16,63 +15,49 @@ from fastapi import HTTPException, status
 from app.config import settings
 from app.models.user import User
 
-# Planos pagos (qualquer um desses reverte para free ao expirar)
 PAID_PLANS = ("jardineiro", "cultivador", "grower_pro", "grower", "pro")
 
+# Normaliza planos legados
+_LEGACY: dict[str, str] = {"grower": "cultivador", "pro": "grower_pro"}
 
-# ---------------------------------------------------------------------------
-# Helpers internos
-# ---------------------------------------------------------------------------
-
-def _plan_limits(plan: str) -> dict:
-    # grower_pro (e legado "pro")
-    if plan in ("grower_pro", "pro"):
-        return {
-            "max_grows": settings.PRO_MAX_GROWS,
-            "max_pots_per_grow": settings.PRO_MAX_POTS_PER_GROW,
-            "max_plants": settings.PRO_MAX_PLANTS,
-            "ai_queries_per_month": 999999,
-            "sensors_allowed": True,
-        }
-    # cultivador (e legado "grower")
-    if plan in ("cultivador", "grower"):
-        return {
-            "max_grows": settings.CULTIVADOR_MAX_GROWS,
-            "max_pots_per_grow": settings.CULTIVADOR_MAX_POTS_PER_GROW,
-            "max_plants": settings.CULTIVADOR_MAX_PLANTS,
-            "ai_queries_per_month": 999999,
-            "sensors_allowed": True,
-        }
-    # jardineiro — cultivador caseiro (R$24,90/mês)
-    if plan == "jardineiro":
-        return {
-            "max_grows": settings.JARDINEIRO_MAX_GROWS,
-            "max_pots_per_grow": settings.JARDINEIRO_MAX_POTS_PER_GROW,
-            "max_plants": settings.JARDINEIRO_MAX_PLANTS,
-            "ai_queries_per_month": settings.JARDINEIRO_AI_QUERIES_PER_MONTH,
-            "sensors_allowed": False,
-        }
-    # free (default)
-    return {
-        "max_grows": settings.FREE_MAX_GROWS,
-        "max_pots_per_grow": settings.FREE_MAX_POTS_PER_GROW,
-        "max_plants": settings.FREE_MAX_PLANTS,
-        "ai_queries_per_month": settings.FREE_AI_QUERIES_PER_MONTH,
-        "sensors_allowed": False,
-    }
+# Fallback estatico (usado quando o cache do plan_config_service ainda nao existe)
+_STATIC_FALLBACK: dict[str, dict] = {
+    "free":       {"max_grows": settings.FREE_MAX_GROWS,        "max_pots_per_grow": settings.FREE_MAX_POTS_PER_GROW,        "max_plants": settings.FREE_MAX_PLANTS,        "ai_queries_per_month": settings.FREE_AI_QUERIES_PER_MONTH,        "sensors_allowed": False},
+    "jardineiro": {"max_grows": settings.JARDINEIRO_MAX_GROWS,  "max_pots_per_grow": settings.JARDINEIRO_MAX_POTS_PER_GROW,  "max_plants": settings.JARDINEIRO_MAX_PLANTS,  "ai_queries_per_month": settings.JARDINEIRO_AI_QUERIES_PER_MONTH,  "sensors_allowed": False},
+    "cultivador": {"max_grows": settings.CULTIVADOR_MAX_GROWS,  "max_pots_per_grow": settings.CULTIVADOR_MAX_POTS_PER_GROW,  "max_plants": settings.CULTIVADOR_MAX_PLANTS,  "ai_queries_per_month": None,                                      "sensors_allowed": True},
+    "grower_pro": {"max_grows": settings.PRO_MAX_GROWS,         "max_pots_per_grow": settings.PRO_MAX_POTS_PER_GROW,         "max_plants": settings.PRO_MAX_PLANTS,         "ai_queries_per_month": None,                                      "sensors_allowed": True},
+}
 
 
 def _effective_plan(user: User) -> str:
-    """Retorna o plano real do usuário, revertendo para 'free' se expirado."""
-    if user.plan in PAID_PLANS:
+    plan = user.plan
+    if plan in _LEGACY:
+        plan = _LEGACY[plan]
+    if plan in PAID_PLANS:
         if user.plan_expires_at and user.plan_expires_at < datetime.now(timezone.utc):
             return "free"
-    return user.plan
+    return plan
 
 
-# ---------------------------------------------------------------------------
-# Checks — lançam HTTPException 403 se limite atingido
-# ---------------------------------------------------------------------------
+def _plan_limits(plan_key: str) -> dict:
+    """Le limites do cache do plan_config_service; cai no fallback estatico."""
+    from app.services.plan_config_service import get_limits_from_cache
+    cached = get_limits_from_cache(plan_key)
+    if cached is not None:
+        ai = cached["ai_queries_per_month"]
+        return {
+            "max_grows": cached["max_grows"],
+            "max_pots_per_grow": cached["max_pots_per_grow"],
+            "max_plants": cached["max_plants"],
+            "ai_queries_per_month": ai if ai is not None else 999999,
+            "sensors_allowed": cached["sensors_allowed"],
+        }
+    # Fallback
+    fb = _STATIC_FALLBACK.get(plan_key, _STATIC_FALLBACK["free"])
+    return {**fb, "ai_queries_per_month": fb["ai_queries_per_month"] if fb["ai_queries_per_month"] is not None else 999999}
+
+
+# ── Checks ────────────────────────────────────────────────────────────────────
 
 def check_grow_limit(user: User, current_grow_count: int) -> None:
     plan = _effective_plan(user)
@@ -80,7 +65,7 @@ def check_grow_limit(user: User, current_grow_count: int) -> None:
     if current_grow_count >= limits["max_grows"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Limite de grows atingido para o plano {plan.upper()}. Faça upgrade para continuar.",
+            detail=f"Limite de grows atingido para o plano {plan.upper()}. Faca upgrade para continuar.",
         )
 
 
@@ -102,7 +87,7 @@ def check_plant_limit(user: User, current_plant_count: int) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 f"Limite de plantas atingido para o plano {plan.upper()} "
-                f"({limits['max_plants']} plantas). Faça upgrade para continuar."
+                f"({limits['max_plants']} plantas). Faca upgrade para continuar."
             ),
         )
 
@@ -112,33 +97,28 @@ def check_ai_limit(user: User) -> None:
     limits = _plan_limits(plan)
     ai_limit = limits["ai_queries_per_month"]
     if ai_limit < 999999 and user.ai_queries_this_month >= ai_limit:
-        plan_display = {"free": "Free", "jardineiro": "Jardineiro"}.get(plan, plan.upper())
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                f"Limite de {ai_limit} consultas de IA atingido este mês. "
-                f"Faça upgrade para continuar usando o Bob."
+                f"Limite de {ai_limit} consultas de IA atingido este mes. "
+                f"Faca upgrade para continuar usando o Bob."
             ),
         )
 
 
 def check_sensor_access(user: User) -> None:
-    """Verifica se o plano permite conectar sensores (Cultivador ou superior)."""
     plan = _effective_plan(user)
     limits = _plan_limits(plan)
     if not limits["sensors_allowed"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sensores disponíveis a partir do plano Cultivador. Faça upgrade para ativar.",
+            detail="Sensores disponiveis a partir do plano Cultivador. Faca upgrade para ativar.",
         )
 
 
-# ---------------------------------------------------------------------------
-# Status do plano — usado pelo endpoint GET /users/me/plan
-# ---------------------------------------------------------------------------
+# ── Status do plano ───────────────────────────────────────────────────────────
 
 def get_plan_status(user: User, current_plant_count: int, current_grow_count: int) -> dict:
-    """Retorna um resumo do plano atual com limites e consumo."""
     effective = _effective_plan(user)
     limits = _plan_limits(effective)
 
@@ -155,13 +135,11 @@ def get_plan_status(user: User, current_plant_count: int, current_grow_count: in
         "effective_plan": effective,
         "is_expired": is_expired,
         "plan_expires_at": user.plan_expires_at,
-        # Limites
         "max_plants": limits["max_plants"],
         "max_grows": limits["max_grows"],
         "max_pots_per_grow": limits["max_pots_per_grow"],
         "ai_queries_per_month": ai_limit if ai_limit < 999999 else None,
         "sensors_allowed": limits["sensors_allowed"],
-        # Uso atual
         "plants_used": current_plant_count,
         "grows_used": current_grow_count,
         "ai_queries_used": user.ai_queries_this_month,
