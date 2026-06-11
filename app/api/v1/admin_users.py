@@ -1,11 +1,8 @@
 """
 Endpoints administrativos -- clientes & assinaturas.
 
-O plano (plan / plan_expires_at) vive direto em User; limites por plano ficam
-em app/config.py. Estes endpoints listam usuarios, exibem uso e ajustam plano
-manualmente (upgrade/downgrade pos pagamento fora do app).
-
 Protegidos pelo mesmo X-Admin-Token de app/api/v1/admin.py.
+GET /admin/plans foi movido para admin_plans.py (suporta edicao em runtime).
 """
 import uuid
 from datetime import datetime
@@ -16,7 +13,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.admin import require_admin_token
-from app.config import settings
 from app.database import get_db
 from app.models.grow import Grow
 from app.models.knowledge import AIConversation
@@ -69,13 +65,6 @@ class UserUpdateIn(BaseModel):
         description="Se true, zera plan_expires_at (plano sem validade)"
     )
     is_active: bool | None = None
-
-
-class PlanLimits(BaseModel):
-    plan: str
-    max_grows: int
-    max_pots_per_grow: int
-    ai_queries_per_month: int | None = None
 
 
 @router.get("/users", response_model=UserListResponse)
@@ -193,45 +182,10 @@ async def delete_user(
     _: None = Depends(require_admin_token),
     db: AsyncSession = Depends(get_db),
 ):
-    """Remove permanentemente o usuario e todos os seus dados.
-
-    Grows tem ondelete=CASCADE na FK, entao o banco apaga o resto em cascata.
-    Plants e AIConversations tem cascade definido no ORM do User.
-    """
+    """Remove permanentemente o usuario e todos os seus dados."""
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado")
 
     await db.delete(user)
     await db.commit()
-
-
-@router.get("/plans", response_model=list[PlanLimits])
-async def list_plan_limits(_: None = Depends(require_admin_token)):
-    """Limites por plano -- configurados via variaveis de ambiente (app/config.py)."""
-    return [
-        PlanLimits(
-            plan="free",
-            max_grows=settings.FREE_MAX_GROWS,
-            max_pots_per_grow=settings.FREE_MAX_POTS_PER_GROW,
-            ai_queries_per_month=settings.FREE_AI_QUERIES_PER_MONTH,
-        ),
-        PlanLimits(
-            plan="jardineiro",
-            max_grows=settings.JARDINEIRO_MAX_GROWS,
-            max_pots_per_grow=settings.JARDINEIRO_MAX_POTS_PER_GROW,
-            ai_queries_per_month=settings.JARDINEIRO_AI_QUERIES_PER_MONTH,
-        ),
-        PlanLimits(
-            plan="cultivador",
-            max_grows=settings.CULTIVADOR_MAX_GROWS,
-            max_pots_per_grow=settings.CULTIVADOR_MAX_POTS_PER_GROW,
-            ai_queries_per_month=None,
-        ),
-        PlanLimits(
-            plan="grower_pro",
-            max_grows=settings.PRO_MAX_GROWS,
-            max_pots_per_grow=settings.PRO_MAX_POTS_PER_GROW,
-            ai_queries_per_month=None,
-        ),
-    ]
