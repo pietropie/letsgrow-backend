@@ -15,18 +15,31 @@ class SensorDevice(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     plant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("plants.id", ondelete="SET NULL"), nullable=True, index=True
+        UUID(as_uuid=True),
+        ForeignKey("plants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     name: Mapped[str] = mapped_column(String(60), nullable=False)
     esp32_mac: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
     firmware_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
+    # Hub+Satellite ESP-NOW topology fields
+    # 'hub' | 'satellite' | 'standalone' (legacy default)
+    module_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # MAC address of the parent hub; populated only for satellites
+    hub_mac: Mapped[str | None] = mapped_column(String(17), nullable=True, index=True)
+    # FALSE while the grower has not assigned this device to a plant yet
+    is_paired: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # JSONB describing which sensors are physically connected
     sensors_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     is_online: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

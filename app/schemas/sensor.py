@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DeviceRegister(BaseModel):
@@ -9,6 +10,32 @@ class DeviceRegister(BaseModel):
     name: str
     esp32_mac: str
     sensors_config: dict = {}
+    # Optional topology fields when registering a hub or standalone manually
+    module_type: Literal["hub", "satellite", "standalone"] | None = None
+    hub_mac: str | None = None
+
+
+class DevicePatch(BaseModel):
+    """
+    Payload for PATCH /iot/devices/{id}.
+
+    The grower uses this endpoint to assign a discovered (pending) satellite
+    to a plant and give it a human-readable name.  All fields are optional so
+    the endpoint can also be used for partial updates on already-paired devices
+    (e.g. renaming).
+    """
+
+    plant_id: uuid.UUID | None = Field(
+        default=None,
+        description="UUID da planta a que o sensor sera atribuido.",
+    )
+    name: str | None = Field(
+        default=None,
+        max_length=60,
+        description="Nome legivel para o dispositivo, ex: 'Sensor solo vaso 1'.",
+    )
+    module_type: Literal["hub", "satellite", "standalone"] | None = None
+    sensors_config: dict | None = None
 
 
 class DeviceResponse(BaseModel):
@@ -18,6 +45,11 @@ class DeviceResponse(BaseModel):
     esp32_mac: str
     firmware_version: str | None
     sensors_config: dict
+    # Hub+Satellite topology
+    module_type: str | None
+    hub_mac: str | None
+    is_paired: bool
+    # Status
     is_online: bool
     last_seen_at: datetime | None
     created_at: datetime
