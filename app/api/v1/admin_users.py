@@ -33,6 +33,7 @@ class UserListItem(BaseModel):
     plan_expires_at: datetime | None
     is_active: bool
     is_verified: bool
+    is_dev_mode: bool
     oauth_provider: str | None
     ai_queries_this_month: int
     created_at: datetime
