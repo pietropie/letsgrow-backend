@@ -70,6 +70,7 @@ class UserResponse(BaseModel):
     plan_expires_at: datetime | None
     is_active: bool
     is_verified: bool
+    is_dev_mode: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
