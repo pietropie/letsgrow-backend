@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     admin,
+    admin_iot,
     admin_plans,
     admin_stats,
     admin_strains,
@@ -25,6 +26,7 @@ api_router.include_router(admin_users.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_plans.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_strains.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_stats.router, prefix="/admin", tags=["admin"])
+api_router.include_router(admin_iot.router, prefix="/admin", tags=["admin"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(grows.router, prefix="/grows", tags=["grows"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
