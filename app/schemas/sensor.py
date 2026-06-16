@@ -41,6 +41,8 @@ class DevicePatch(BaseModel):
 class DeviceResponse(BaseModel):
     id: uuid.UUID
     plant_id: uuid.UUID | None
+    # grow_id is resolved server-side via plant.grow_id (not stored on sensor_devices)
+    grow_id: uuid.UUID | None = None
     name: str
     esp32_mac: str
     firmware_version: str | None

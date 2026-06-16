@@ -92,6 +92,25 @@ async def _get_owned_device(
 # GET /iot/devices
 # ---------------------------------------------------------------------------
 
+def _device_to_response(device: SensorDevice, grow_id: uuid.UUID | None) -> DeviceResponse:
+    """Build DeviceResponse enriched with grow_id (resolved via plant.grow_id)."""
+    return DeviceResponse(
+        id=device.id,
+        plant_id=device.plant_id,
+        grow_id=grow_id,
+        name=device.name,
+        esp32_mac=device.esp32_mac,
+        firmware_version=device.firmware_version,
+        sensors_config=device.sensors_config,
+        module_type=device.module_type,
+        hub_mac=device.hub_mac,
+        is_paired=device.is_paired,
+        is_online=device.is_online,
+        last_seen_at=device.last_seen_at,
+        created_at=device.created_at,
+    )
+
+
 @router.get("/devices", response_model=list[DeviceResponse])
 async def list_devices(
     grow_id: uuid.UUID | None = None,
@@ -109,41 +128,43 @@ async def list_devices(
     Pending satellites (is_paired=False) are included by default so the mobile
     app can display a "new device detected" flow.  They are identified via the
     hub ownership chain.
+
+    grow_id is resolved server-side via plant.grow_id and included in each
+    DeviceResponse so the mobile can filter by grow without a second query.
     """
-    # Build paired devices query (devices linked to a plant owned by the user)
+    # Paired devices: join plant to get grow_id and verify ownership
     paired_q = (
-        select(SensorDevice)
+        select(SensorDevice, Plant.grow_id.label("resolved_grow_id"))
         .join(Plant, SensorDevice.plant_id == Plant.id)
         .where(Plant.user_id == current_user.id)
     )
     if grow_id:
         paired_q = paired_q.where(Plant.grow_id == grow_id)
 
-    paired_result = await db.execute(paired_q.order_by(SensorDevice.created_at.desc()))
-    paired_devices = list(paired_result.scalars().all())
+    paired_rows = (await db.execute(paired_q.order_by(SensorDevice.created_at.desc()))).all()
+    paired_devices = [_device_to_response(d, g) for d, g in paired_rows]
 
     if paired_only:
         return paired_devices
 
-    # Collect hub MACs that belong to this user so we can surface their satellites
-    hub_macs = [
-        d.esp32_mac
-        for d in paired_devices
-        if d.module_type == "hub"
-    ]
+    # Hub MACs owned by this user (for pending satellite discovery)
+    hub_macs = [d.esp32_mac for d in [r[0] for r in paired_rows] if d.module_type == "hub"]
 
-    # Pending satellites: not paired, hub_mac points to one of the user's hubs
-    pending_devices: list[SensorDevice] = []
+    # Pending satellites: not yet paired, hub_mac links to one of the user's hubs
+    pending_devices: list[DeviceResponse] = []
     if hub_macs:
-        pending_result = await db.execute(
-            select(SensorDevice)
-            .where(
-                SensorDevice.is_paired.is_(False),
-                SensorDevice.hub_mac.in_(hub_macs),
+        pending_rows = (
+            await db.execute(
+                select(SensorDevice)
+                .where(
+                    SensorDevice.is_paired.is_(False),
+                    SensorDevice.hub_mac.in_(hub_macs),
+                )
+                .order_by(SensorDevice.created_at.desc())
             )
-            .order_by(SensorDevice.created_at.desc())
-        )
-        pending_devices = list(pending_result.scalars().all())
+        ).scalars().all()
+        # Pending devices don't have a plant yet → grow_id is None
+        pending_devices = [_device_to_response(d, None) for d in pending_rows]
 
     return paired_devices + pending_devices
 
@@ -194,12 +215,19 @@ async def register_device(
     db.add(device)
     await db.commit()
     await db.refresh(device)
-    return device
+    return _device_to_response(device, await _resolve_device_grow_id(device, db))
 
 
 # ---------------------------------------------------------------------------
 # GET /iot/devices/{device_id}
 # ---------------------------------------------------------------------------
+
+async def _resolve_device_grow_id(device: SensorDevice, db: AsyncSession) -> uuid.UUID | None:
+    if not device.plant_id:
+        return None
+    row = (await db.execute(select(Plant.grow_id).where(Plant.id == device.plant_id))).scalar_one_or_none()
+    return row
+
 
 @router.get("/devices/{device_id}", response_model=DeviceResponse)
 async def get_device(
@@ -207,7 +235,8 @@ async def get_device(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _get_owned_device(device_id, current_user, db)
+    device = await _get_owned_device(device_id, current_user, db)
+    return _device_to_response(device, await _resolve_device_grow_id(device, db))
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +290,7 @@ async def patch_device(
 
     await db.commit()
     await db.refresh(device)
-    return device
+    return _device_to_response(device, await _resolve_device_grow_id(device, db))
 
 
 # ---------------------------------------------------------------------------
