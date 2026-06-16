@@ -46,6 +46,9 @@ class AIConversation(Base):
     grow_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("grows.id", ondelete="SET NULL"), nullable=True
     )
+    plant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plants.id", ondelete="SET NULL"), nullable=True
+    )
 
     title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     messages: Mapped[list] = mapped_column(JSON, default=list, nullable=False)

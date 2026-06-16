@@ -11,7 +11,7 @@ from app.models.grow import Grow
 from app.models.knowledge import AIConversation, KnowledgeChunk
 from app.models.plant import Plant
 from app.models.sensor import SensorDevice, SensorReading
-from app.rag.prompts import build_system_prompt, build_grow_context, build_plant_context
+from app.rag.prompts import build_customer_context, build_grow_context, build_plant_context, build_system_prompt
 from app.rag.retriever import retrieve_chunks
 from app.services import ai_provider
 
@@ -122,9 +122,11 @@ async def chat(
     grow: Grow | None = None,
     plant: Plant | None = None,
 ) -> str:
-    # Se uma planta específica foi fornecida, usa contexto detalhado dela
-    # (incluindo ambiente do grow vinculado, se houver). Caso contrário,
-    # usa o contexto geral do grow selecionado na conversa.
+    # Contexto completo do cliente (todos grows + plantas + eventos recentes)
+    # injetado em TODA conversa, independentemente de grow/planta selecionados.
+    customer_ctx = await build_customer_context(db, conversation.user_id)
+
+    # Contexto focado: planta específica (com grow vinculado) ou grow selecionado
     plant_ctx = ""
     grow_ctx = ""
     if plant:
@@ -139,7 +141,7 @@ async def chat(
     chunks = await retrieve_chunks(db, user_message, grow, top_k=4)
     rag_context = "\n\n---\n\n".join(c.content for c in chunks)
 
-    system_prompt = build_system_prompt(grow_ctx, rag_context, plant_ctx)
+    system_prompt = build_system_prompt(grow_ctx, rag_context, plant_ctx, customer_ctx)
 
     # Build message history (last 6 messages to save tokens)
     history = conversation.messages[-6:] if conversation.messages else []

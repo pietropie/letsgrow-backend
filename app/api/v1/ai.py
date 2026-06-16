@@ -34,6 +34,7 @@ class ConversationSummary(BaseModel):
     id: uuid.UUID
     title: str | None
     grow_id: uuid.UUID | None
+    plant_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
     message_count: int
@@ -81,6 +82,7 @@ async def chat_endpoint(
         conversation = AIConversation(
             user_id=current_user.id,
             grow_id=body.grow_id,
+            plant_id=body.plant_id,
             messages=[],
             title=body.message[:60],
         )
@@ -119,6 +121,7 @@ async def list_conversations(
             id=c.id,
             title=c.title,
             grow_id=c.grow_id,
+            plant_id=c.plant_id,
             created_at=c.created_at,
             updated_at=c.updated_at,
             message_count=len(c.messages),
