@@ -36,7 +36,14 @@ _MODULE_SUBTYPES = Literal["solo", "ambiente", "ppfd", "nutricao", "automacao"]
 class SimulateDiscoveryRequest(BaseModel):
     grow_id: uuid.UUID | None = Field(
         default=None,
-        description="UUID do grow onde o dispositivo sera criado. Null = sem grow vinculado.",
+        description="UUID do grow (apenas para validacao; nao vincula o device).",
+    )
+    plant_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "UUID da planta a vincular. Quando informado, o device e criado "
+            "com is_paired=True e plant_id definido — tornando-o visivel no app do dono da planta."
+        ),
     )
     hub_mac: str = Field(
         description="MAC do hub pai (12 chars hex sem separadores, ex: 112233445566).",
@@ -145,7 +152,7 @@ async def simulate_discovery(
     - O device e criado com is_paired=False para simular o fluxo de pairing
       real pelo app mobile.
     """
-    # 1. Valida grow_id (opcional)
+    # 1. Valida grow_id (opcional — apenas confirmação de existência)
     if body.grow_id is not None:
         grow_result = await db.execute(
             select(Grow).where(Grow.id == body.grow_id)
@@ -154,6 +161,17 @@ async def simulate_discovery(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Grow '{body.grow_id}' nao encontrado.",
+            )
+
+    # 1b. Valida plant_id (opcional — pareia imediatamente se informado)
+    if body.plant_id is not None:
+        plant_result = await db.execute(
+            select(Plant).where(Plant.id == body.plant_id)
+        )
+        if not plant_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Planta '{body.plant_id}' nao encontrada.",
             )
 
     # 2. Idempotencia: retorna existente se MAC ja cadastrado
@@ -167,18 +185,18 @@ async def simulate_discovery(
         grow_id = await _resolve_grow_id(existing, db)
         return _to_admin_response(existing, grow_id)
 
-    # 3. Cria o device pendente
+    # 3. Cria o device
     device_name = _build_device_name(body.module_subtype, body.satellite_mac)
+    is_paired = body.plant_id is not None  # pareado imediatamente se plant_id informado
 
     device = SensorDevice(
         esp32_mac=body.satellite_mac.upper(),
         name=device_name,
         module_type=body.module_type,
         hub_mac=body.hub_mac.upper(),
-        is_paired=False,
+        is_paired=is_paired,
         sensors_config={},
-        # plant_id fica None: o grower vai parear pelo app mobile (PATCH /iot/devices/{id})
-        plant_id=None,
+        plant_id=body.plant_id,
     )
     db.add(device)
     await db.commit()
