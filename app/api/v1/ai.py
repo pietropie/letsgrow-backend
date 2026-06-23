@@ -7,11 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.ai_config import AIConfig
 from app.models.grow import Grow
 from app.models.knowledge import AIConversation
 from app.models.plant import Plant
 from app.models.user import User
 from app.services.auth import get_current_user
+from app.services.guard import guard_user_message
 from app.services.rag import chat
 from app.services.subscription import check_ai_limit
 
@@ -51,6 +53,18 @@ async def chat_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     check_ai_limit(current_user)
+
+    # Carrega a mensagem de bloqueio personalizada do admin (se configurada)
+    _config_result = await db.execute(select(AIConfig).order_by(AIConfig.created_at.asc()).limit(1))
+    _ai_config = _config_result.scalar_one_or_none()
+    _injection_msg = _ai_config.injection_message if _ai_config else None
+
+    # Proteção contra prompt injection — valida e sanitiza antes de tocar o LLM
+    body.message = guard_user_message(
+        body.message,
+        user_id=str(current_user.id),
+        injection_message=_injection_msg,
+    )
 
     grow = None
     if body.grow_id:

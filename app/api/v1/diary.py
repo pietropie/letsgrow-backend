@@ -11,8 +11,8 @@ Diferença em relação a GET /plants/{id}/events:
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,7 +77,111 @@ def _event_photo_urls(photo_keys: list[str] | None) -> list[str]:
     return urls
 
 
+# ─── Request body para criação em bulk ───────────────────────────────────────
+
+
+class DiaryBulkCreate(BaseModel):
+    """Cria o mesmo evento em múltiplas plantas de uma só vez (usado pelo diário global)."""
+
+    plant_ids: list[uuid.UUID] = Field(..., min_length=1)
+    event_type: str
+    event_date: datetime
+    ppm: float | None = None
+    ph_in: float | None = None
+    ph_out: float | None = None
+    water_volume_ml: float | None = None
+    temperature_c: float | None = None
+    humidity_rh: float | None = None
+    weight_g: float | None = None
+    severity: str | None = None
+    is_flush: bool | None = None
+    notes: str | None = None
+    photo_keys: list[str] | None = None
+
+
 # ─── Routes ───────────────────────────────────────────────────────────────────
+
+
+@router.post("", response_model=list[DiaryEntryResponse], status_code=status.HTTP_201_CREATED)
+async def create_diary_entries(
+    body: DiaryBulkCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Cria o mesmo evento em uma ou mais plantas simultaneamente.
+
+    O diário global envia `plant_ids` com todas as plantas selecionadas;
+    cada uma recebe um GrowEvent independente, que também aparece na tela
+    individual de cada planta (pois ambas usam a mesma tabela grow_events).
+    """
+    if not body.plant_ids:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="plant_ids nao pode ser vazio")
+
+    # Verifica que todas as plantas pertencem ao usuário
+    plants_result = await db.execute(
+        select(Plant).where(
+            Plant.id.in_(body.plant_ids),
+            Plant.user_id == current_user.id,
+        )
+    )
+    owned_plants = {p.id: p for p in plants_result.scalars().all()}
+
+    if len(owned_plants) != len(body.plant_ids):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Uma ou mais plantas nao pertencem ao usuario")
+
+    # Cria um GrowEvent para cada planta
+    event_fields = body.model_dump(exclude={"plant_ids"})
+    created_events: list[GrowEvent] = []
+    for plant_id in body.plant_ids:
+        ev = GrowEvent(plant_id=plant_id, **event_fields)
+        db.add(ev)
+        created_events.append(ev)
+
+    await db.commit()
+    for ev in created_events:
+        await db.refresh(ev)
+
+    # Busca strains para enriquecer a resposta
+    strain_ids = list({owned_plants[ev.plant_id].strain_id for ev in created_events if owned_plants[ev.plant_id].strain_id})
+    strain_map: dict[uuid.UUID, Strain] = {}
+    if strain_ids:
+        strains_result = await db.execute(select(Strain).where(Strain.id.in_(strain_ids)))
+        for s in strains_result.scalars().all():
+            strain_map[s.id] = s
+
+    entries: list[DiaryEntryResponse] = []
+    for ev in created_events:
+        plant = owned_plants.get(ev.plant_id)
+        strain = strain_map.get(plant.strain_id) if (plant and plant.strain_id) else None
+        entries.append(
+            DiaryEntryResponse(
+                id=ev.id,
+                plant_id=ev.plant_id,
+                event_type=ev.event_type,
+                event_date=ev.event_date,
+                ppm=ev.ppm,
+                ph_in=ev.ph_in,
+                ph_out=ev.ph_out,
+                water_volume_ml=ev.water_volume_ml,
+                temperature_c=ev.temperature_c,
+                humidity_rh=ev.humidity_rh,
+                weight_g=ev.weight_g,
+                severity=ev.severity,
+                is_flush=ev.is_flush,
+                notes=ev.notes,
+                photo_keys=ev.photo_keys,
+                photo_urls=_event_photo_urls(ev.photo_keys),
+                created_at=ev.created_at,
+                plant_name=plant.strain_name if plant else None,
+                plant_nickname=getattr(plant, "nickname", None),
+                strain_name=strain.name if strain else (plant.strain_name if plant else None),
+                strain_image_url=strain_image_url_for_response(strain.image_url if strain else None),
+                current_phase=plant.current_phase if plant else None,
+            )
+        )
+
+    return entries
 
 
 @router.get("", response_model=list[DiaryEntryResponse])

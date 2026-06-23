@@ -46,6 +46,7 @@ class AIConfigOut(BaseModel):
     updated_by: str | None
     updated_at: datetime
     reindex_required: bool = False
+    injection_message: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -58,6 +59,7 @@ class AIConfigIn(BaseModel):
     embedding_model: str
     embedding_dimensions: int = Field(default=768, gt=0)
     updated_by: str | None = Field(default=None, description="Quem está alterando (ex.: seu e-mail) — fica registrado para auditoria")
+    injection_message: str | None = Field(default=None, description="Mensagem personalizada quando o guard bloqueia prompt injection")
 
 
 class AIProviderOptions(BaseModel):
@@ -137,6 +139,7 @@ async def update_ai_config(
     config.embedding_model = body.embedding_model.strip()
     config.embedding_dimensions = body.embedding_dimensions
     config.updated_by = body.updated_by
+    config.injection_message = body.injection_message.strip() if body.injection_message else None
 
     await db.commit()
     await db.refresh(config)

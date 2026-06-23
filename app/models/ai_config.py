@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Float, Integer, String
+from sqlalchemy import Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,3 +44,7 @@ class AIConfig(Base, TimestampMixin):
     # Quem fez a última alteração (e-mail/identificador informado no painel) —
     # útil para auditoria simples em caso de incidentes.
     updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Mensagem personalizada exibida quando o guard bloqueia uma tentativa de
+    # prompt injection. Se NULL, usa o texto padrão definido em guard.py.
+    injection_message: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -337,3 +337,77 @@ async def admin_reject_chunk(
     await db.commit()
     await db.refresh(chunk)
     return chunk
+
+
+# ─── Injection message improvement ────────────────────────────────────────────
+
+
+class ImproveInjectionMessageRequest(BaseModel):
+    current_message: str = ""
+
+
+class ImproveInjectionMessageResponse(BaseModel):
+    suggestions: list[str]
+
+
+_IMPROVE_SYSTEM = """Você é um especialista em UX de chatbots com um senso de humor afiado.
+
+Sua tarefa é gerar variações criativas e divertidas de uma mensagem de erro que é exibida quando alguém tenta manipular um assistente de cultivo de cannabis chamado Bob.
+
+Regras:
+- As mensagens devem ser engraçadas, criativas e levemente irônicas
+- Devem manter o tom de que Bob é um consultor de cultivo — não um robô hackeável
+- Podem fazer referências à cultura de cultivo (plantas, colheita, nutrição, etc.)
+- Devem ser curtas (máx. 120 caracteres)
+- Devem estar em português brasileiro
+- NÃO devem ser ofensivas ou grosseiras
+- Devem deixar claro que a tentativa foi detectada e não vai funcionar
+
+Retorne APENAS um array JSON com exatamente 5 strings. Exemplo:
+["mensagem 1", "mensagem 2", "mensagem 3", "mensagem 4", "mensagem 5"]"""
+
+
+@router.post("/ai/injection-message/improve", response_model=ImproveInjectionMessageResponse)
+async def improve_injection_message(
+    body: ImproveInjectionMessageRequest,
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Usa o LLM para gerar variações criativas/divertidas da mensagem de bloqueio por injection."""
+    from app.services.rag import get_ai_context
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    _, llm, _ = await get_ai_context(db)
+
+    user_prompt = (
+        f"Mensagem atual: \"{body.current_message or 'Mensagem não permitida. O Bob é um consultor de cultivo e não pode processar esse tipo de instrução.'}\"\n\n"
+        "Gere 5 variações criativas e engraçadas para essa mensagem."
+    )
+
+    lc_messages = [
+        SystemMessage(content=_IMPROVE_SYSTEM),
+        HumanMessage(content=user_prompt),
+    ]
+
+    response = await llm.ainvoke(lc_messages)
+    raw = response.content.strip()
+
+    # Strip markdown fences if present
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip().rstrip("`").strip()
+
+    try:
+        suggestions: list[str] = json.loads(raw)
+        if not isinstance(suggestions, list):
+            suggestions = []
+        suggestions = [s for s in suggestions if isinstance(s, str)][:5]
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"LLM retornou JSON inválido: {raw[:200]}",
+        )
+
+    return ImproveInjectionMessageResponse(suggestions=suggestions)
