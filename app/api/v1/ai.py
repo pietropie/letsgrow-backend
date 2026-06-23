@@ -23,6 +23,8 @@ class ChatRequest(BaseModel):
     grow_id: uuid.UUID | None = None
     plant_id: uuid.UUID | None = None
     conversation_id: uuid.UUID | None = None
+    # base64 data URIs, e.g. "data:image/jpeg;base64,..."  (max 4 imagens)
+    images: list[str] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -89,7 +91,7 @@ async def chat_endpoint(
         db.add(conversation)
         await db.flush()
 
-    reply = await chat(db, conversation, body.message, grow, plant)
+    reply = await chat(db, conversation, body.message, grow, plant, body.images or [])
 
     now_iso = datetime.now(timezone.utc).isoformat()
     conversation.messages = [

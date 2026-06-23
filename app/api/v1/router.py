@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     admin,
+    admin_ai,
     admin_dev_mode,
     admin_iot,
     admin_plans,
@@ -24,6 +25,7 @@ from app.api.v1 import (
 api_router = APIRouter()
 
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(admin_ai.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_users.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_plans.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_strains.router, prefix="/admin", tags=["admin"])

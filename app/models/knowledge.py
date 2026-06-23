@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,9 +29,27 @@ class KnowledgeChunk(Base):
     tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
     chunk_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Pipeline de revisao: active (indexado no RAG), draft (aguardando revisao), rejected
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", server_default="active", index=True
+    )
+    # confidence score do LLM extractor (0.0 - 1.0)
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # conversa de origem quando chunk foi extraido de uma conversa de cliente
+    source_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("ai_conversations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # justificativa do LLM para a extracao
+    extraction_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    source_conversation = relationship("AIConversation", foreign_keys=[source_conversation_id])
 
 
 class AIConversation(Base):

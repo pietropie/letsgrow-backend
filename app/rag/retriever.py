@@ -69,7 +69,8 @@ async def retrieve_chunks(
         query_sql = text(
             f"""
             SELECT * FROM knowledge_chunks
-            WHERE ({phase_conditions}) OR phase_relevance IS NULL
+            WHERE (({phase_conditions}) OR phase_relevance IS NULL)
+              AND (status = 'active' OR status IS NULL)
             ORDER BY embedding <=> :vector
             LIMIT :limit
             """
@@ -78,6 +79,7 @@ async def retrieve_chunks(
         query_sql = text(
             """
             SELECT * FROM knowledge_chunks
+            WHERE status = 'active' OR status IS NULL
             ORDER BY embedding <=> :vector
             LIMIT :limit
             """

@@ -121,7 +121,10 @@ async def chat(
     user_message: str,
     grow: Grow | None = None,
     plant: Plant | None = None,
+    images: list[str] | None = None,
 ) -> str:
+    from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+
     # Contexto completo do cliente (todos grows + plantas + eventos recentes)
     # injetado em TODA conversa, independentemente de grow/planta selecionados.
     customer_ctx = await build_customer_context(db, conversation.user_id)
@@ -145,13 +148,25 @@ async def chat(
 
     # Build message history (last 6 messages to save tokens)
     history = conversation.messages[-6:] if conversation.messages else []
-    messages = [("system", system_prompt)]
+    lc_messages: list = [SystemMessage(content=system_prompt)]
     for msg in history:
-        messages.append((msg["role"], msg["content"]))
-    messages.append(("human", user_message))
+        if msg["role"] == "assistant":
+            lc_messages.append(AIMessage(content=msg["content"]))
+        else:
+            lc_messages.append(HumanMessage(content=msg["content"]))
+
+    # Last human message — multimodal if images were sent
+    images = [img for img in (images or []) if img.startswith("data:image/")][:4]
+    if images:
+        content_blocks: list[dict] = [{"type": "text", "text": user_message}]
+        for data_uri in images:
+            content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
+        lc_messages.append(HumanMessage(content=content_blocks))
+    else:
+        lc_messages.append(HumanMessage(content=user_message))
 
     _, llm, _ = await get_ai_context(db)
-    response = await llm.ainvoke(messages)
+    response = await llm.ainvoke(lc_messages)
     return response.content
 
 
