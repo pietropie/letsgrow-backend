@@ -11,6 +11,7 @@ from app.api.v1 import (
     admin_users,
     ai,
     auth,
+    diary,
     feature_flags,
     grows,
     iot,
@@ -42,5 +43,6 @@ api_router.include_router(strains.router, prefix="/strains", tags=["strains"])
 api_router.include_router(sensors.router, prefix="/sensors", tags=["sensors"])
 api_router.include_router(iot.router, prefix="/iot", tags=["iot"])
 api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
+api_router.include_router(diary.router, prefix="/diary", tags=["diary"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 api_router.include_router(feature_flags.public_router, tags=["feature-flags"])
