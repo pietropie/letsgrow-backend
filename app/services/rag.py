@@ -157,17 +157,38 @@ async def chat(
 
     # Last human message — multimodal if images were sent
     images = [img for img in (images or []) if img.startswith("data:image/")][:4]
+    _, llm, _ = await get_ai_context(db)
+
     if images:
         content_blocks: list[dict] = [{"type": "text", "text": user_message}]
         for data_uri in images:
             content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
         lc_messages.append(HumanMessage(content=content_blocks))
+        try:
+            response = await llm.ainvoke(lc_messages)
+            return response.content
+        except Exception as vision_err:
+            logger.warning(
+                "Falha ao processar imagens com o LLM configurado (%s). "
+                "Retentando sem imagens.", vision_err
+            )
+            # Fallback: remove o bloco multimodal e tenta só com texto
+            lc_messages[-1] = HumanMessage(content=user_message)
+            try:
+                response = await llm.ainvoke(lc_messages)
+                return (
+                    response.content
+                    + "\n\n_(Obs.: não consegui analisar as imagens — o modelo de IA configurado "
+                    "pode não ter suporte a visão. Peça ao administrador para configurar "
+                    "Gemini 1.5 Flash ou Claude no painel de IA.)_"
+                )
+            except Exception as text_err:
+                logger.error("Falha total no chat, inclusive sem imagens: %s", text_err)
+                raise
     else:
         lc_messages.append(HumanMessage(content=user_message))
-
-    _, llm, _ = await get_ai_context(db)
-    response = await llm.ainvoke(lc_messages)
-    return response.content
+        response = await llm.ainvoke(lc_messages)
+        return response.content
 
 
 # ─── Dicas contextuais do Bob ────────────────────────────────────────────────
