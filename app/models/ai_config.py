@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Float, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -48,3 +49,11 @@ class AIConfig(Base, TimestampMixin):
     # Mensagem personalizada exibida quando o guard bloqueia uma tentativa de
     # prompt injection. Se NULL, usa o texto padrão definido em guard.py.
     injection_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Agendamento de push diário ────────────────────────────────────────────
+    daily_push_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    daily_push_hour: Mapped[int] = mapped_column(Integer, default=9, nullable=False)
+    daily_push_minute: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    daily_push_last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # JSON string: {"users_processed": N, "pushed": N, "errors": N, ...}
+    daily_push_last_stats: Mapped[str | None] = mapped_column(Text, nullable=True)

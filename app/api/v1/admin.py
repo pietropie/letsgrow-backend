@@ -162,7 +162,85 @@ async def update_ai_config(
     return response
 
 
-# ─── Push notifications diárias ──────────────────────────────────────────────
+# ─── Push notifications: schedule ────────────────────────────────────────────
+
+class PushScheduleOut(BaseModel):
+    enabled: bool
+    hour: int
+    minute: int
+    # Resultado do último envio (None se nunca rodou)
+    last_run_at: datetime | None = None
+    last_stats: dict | None = None
+
+
+class PushScheduleIn(BaseModel):
+    enabled: bool = True
+    hour: int = Field(ge=0, le=23)
+    minute: int = Field(ge=0, le=59)
+
+
+@router.get("/push/schedule", response_model=PushScheduleOut)
+async def get_push_schedule(
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retorna a configuração atual de agendamento de push."""
+    import json as _json
+    config = await _get_or_create_config(db)
+    stats = None
+    if config.daily_push_last_stats:
+        try:
+            stats = _json.loads(config.daily_push_last_stats)
+        except Exception:
+            pass
+    return PushScheduleOut(
+        enabled=config.daily_push_enabled,
+        hour=config.daily_push_hour,
+        minute=config.daily_push_minute,
+        last_run_at=config.daily_push_last_run_at,
+        last_stats=stats,
+    )
+
+
+@router.put("/push/schedule", response_model=PushScheduleOut)
+async def update_push_schedule(
+    body: PushScheduleIn,
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Atualiza horário/ativação do push diário e reagenda o job imediatamente.
+    O novo horário entra em vigor sem precisar reiniciar o servidor.
+    """
+    import json as _json
+    from app.services.scheduler import reschedule
+
+    config = await _get_or_create_config(db)
+    config.daily_push_enabled = body.enabled
+    config.daily_push_hour = body.hour
+    config.daily_push_minute = body.minute
+    await db.commit()
+    await db.refresh(config)
+
+    # Reagenda em tempo real
+    reschedule(body.hour, body.minute, body.enabled)
+
+    stats = None
+    if config.daily_push_last_stats:
+        try:
+            stats = _json.loads(config.daily_push_last_stats)
+        except Exception:
+            pass
+    return PushScheduleOut(
+        enabled=config.daily_push_enabled,
+        hour=config.daily_push_hour,
+        minute=config.daily_push_minute,
+        last_run_at=config.daily_push_last_run_at,
+        last_stats=stats,
+    )
+
+
+# ─── Push notifications: disparo manual ──────────────────────────────────────
 
 class DailyPushResult(BaseModel):
     users_processed: int

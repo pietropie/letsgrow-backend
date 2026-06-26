@@ -28,7 +28,15 @@ async def lifespan(app: FastAPI):
         mqtt_task = asyncio.create_task(run_mqtt_listener())
         logger.info("MQTT listener started")
 
+    # Scheduler de push diário (APScheduler)
+    from app.services.scheduler import scheduler, setup_daily_push
+    scheduler.start()
+    await setup_daily_push()
+    logger.info("APScheduler iniciado")
+
     yield
+
+    scheduler.shutdown(wait=False)
 
     if mqtt_task:
         mqtt_task.cancel()
