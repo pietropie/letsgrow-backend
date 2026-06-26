@@ -55,10 +55,22 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    from datetime import timezone as _tz
+
     user_id = decode_token(credentials.credentials, "access")
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuário não encontrado ou inativo")
+
+    # Atualiza last_seen_at com debounce de 1h para não sobrecarregar o DB
+    now = datetime.now(_tz.utc)
+    last = user.last_seen_at
+    if last and last.tzinfo is None:
+        last = last.replace(tzinfo=_tz.utc)
+    if last is None or (now - last).total_seconds() > 3600:
+        user.last_seen_at = now
+        await db.commit()
+
     return user
