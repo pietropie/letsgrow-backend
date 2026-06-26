@@ -8,8 +8,9 @@ guardado só no .env/Coolify resolve a necessidade real ("eu, Pietro, preciso
 trocar isso rápido em uma emergência") sem esse trabalho extra. Ver
 app/config.py:ADMIN_TOKEN para como gerar e configurar.
 """
+import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
@@ -19,8 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.ai_config import AIConfig
+from app.models.plant import Plant
+from app.models.user import User
 from app.services import ai_provider
 from app.services.rag import invalidate_cache
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -155,3 +160,109 @@ async def update_ai_config(
     # reindexar (scripts/index_brain.py --wiki-path ... --clear).
     response.reindex_required = embedding_changed
     return response
+
+
+# ─── Push notifications diárias ──────────────────────────────────────────────
+
+class DailyPushResult(BaseModel):
+    users_processed: int
+    pushed: int
+    skipped_no_token: int
+    skipped_no_plants: int
+    errors: int
+
+
+@router.post("/push/daily", response_model=DailyPushResult)
+async def send_daily_push(
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Dispara as notificações push diárias do Bob para todos os usuários ativos
+    que tenham um expo_push_token registrado e pelo menos 1 planta ativa.
+
+    Invocado pelo Coolify cron job (ou manualmente para testar):
+        curl -X POST https://api.letsgrow.app/api/v1/admin/push/daily \\
+             -H "X-Admin-Token: $ADMIN_TOKEN"
+
+    Anti-spam: um usuário não recebe mais de 1 push/dia (controlado por
+    daily_brief_sent_at no modelo User).
+    """
+    from app.services.daily_brief import generate_daily_brief, invalidate_brief
+    from app.services.push import send_push
+
+    # Busca usuários com token e plantas ativas
+    users_result = await db.execute(
+        select(User).where(
+            User.is_active == True,  # noqa: E712
+            User.expo_push_token.isnot(None),
+        )
+    )
+    users = users_result.scalars().all()
+
+    pushed = 0
+    skipped_no_token = 0
+    skipped_no_plants = 0
+    errors = 0
+    now = datetime.now(timezone.utc)
+
+    for user in users:
+        if not user.expo_push_token:
+            skipped_no_token += 1
+            continue
+
+        # Anti-spam: pula se já foi enviado hoje
+        if user.daily_brief_sent_at:
+            last = user.daily_brief_sent_at
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if (now - last).total_seconds() < 82_800:  # menos de 23h
+                continue
+
+        # Verifica se tem plantas ativas
+        plant_count = (
+            await db.execute(
+                select(Plant.id).where(
+                    Plant.user_id == user.id,
+                    Plant.is_active == True,  # noqa: E712
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+
+        if not plant_count:
+            skipped_no_plants += 1
+            continue
+
+        try:
+            # Força refresh do brief (sem cache) para ter dados frescos
+            await invalidate_brief(user.id)
+            brief = await generate_daily_brief(db, user.id, force_refresh=True)
+
+            # Só envia se há algo relevante (não é só "tudo em dia")
+            ok = await send_push(
+                token=user.expo_push_token,
+                title=brief.title,
+                body=brief.body,
+                data={"type": "daily_brief", "urgent_count": brief.urgent_count},
+            )
+            if ok:
+                pushed += 1
+                user.daily_brief_sent_at = now
+            else:
+                errors += 1
+        except Exception as exc:
+            logger.error("Erro ao processar push para user %s: %s", user.id, exc)
+            errors += 1
+
+    await db.commit()
+    logger.info(
+        "Daily push concluído: %d pushed, %d sem token, %d sem plantas, %d erros",
+        pushed, skipped_no_token, skipped_no_plants, errors,
+    )
+    return DailyPushResult(
+        users_processed=len(users),
+        pushed=pushed,
+        skipped_no_token=skipped_no_token,
+        skipped_no_plants=skipped_no_plants,
+        errors=errors,
+    )

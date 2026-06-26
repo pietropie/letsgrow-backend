@@ -51,6 +51,10 @@ class AvatarConfirmIn(BaseModel):
     object_key: str
 
 
+class PushTokenIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+
+
 class PlanStatusResponse(BaseModel):
     plan: str
     effective_plan: str
@@ -190,6 +194,17 @@ async def confirm_avatar_upload(
 # ---------------------------------------------------------------------------
 # GET /users/me/plan
 # ---------------------------------------------------------------------------
+
+@router.put("/me/push-token", status_code=status.HTTP_204_NO_CONTENT)
+async def update_push_token(
+    body: PushTokenIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Registra ou atualiza o token Expo Push do dispositivo do usuário."""
+    current_user.expo_push_token = body.token.strip()
+    await db.commit()
+
 
 @router.get("/me/plan", response_model=PlanStatusResponse)
 async def get_my_plan(

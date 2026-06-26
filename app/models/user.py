@@ -28,6 +28,10 @@ class User(Base, TimestampMixin):
 
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # Push notifications
+    expo_push_token: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    daily_brief_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Subscription
     plan: Mapped[str] = mapped_column(String(20), default="free", nullable=False)
     plan_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

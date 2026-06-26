@@ -18,6 +18,93 @@ _TRAINING_TYPES = {
     "pruning", "supercropping", "fim_veg", "flip",
 }
 
+def _compute_next_steps(
+    plant: "Plant",
+    trainings_done: set[str],
+    days_since_watering: float | None,
+    avg_watering_interval: float | None,
+    today: date,
+) -> list[str]:
+    """Calcula acoes pendentes/sugeridas para a planta com base na fase e historico.
+
+    Retorna lista de strings ordenadas por urgencia, prontas para injecao no contexto
+    do Bob. Cada item e autoexplicativo para que o Bob possa repassar ao cultivador
+    com o contexto de 'por que fazer agora'.
+    """
+    steps: list[str] = []
+    phase = (plant.current_phase or "").lower()
+
+    # --- Rega ---
+    if days_since_watering is not None:
+        if avg_watering_interval:
+            days_remaining = avg_watering_interval - days_since_watering
+            if days_remaining <= 0:
+                steps.append(
+                    "URGENTE: REGA — palito ja deve estar seco; regue ate escorrer pela bandeja"
+                )
+            elif days_remaining <= 1.5:
+                steps.append(
+                    f"Rega em ~{days_remaining:.1f} dia(s) — prepare a calda com pH 6.0-6.5 e nutrientes da fase"
+                )
+        elif days_since_watering >= 3:
+            steps.append(
+                f"Verificar rega — {int(days_since_watering)}d sem registro; teste o palito"
+            )
+
+    # --- Fase vegetativa ---
+    if phase in ("veg", "vegetative", "seedling", "vegetação", "vegetacao"):
+        germ_days = (today - plant.germination_date).days if plant.germination_date else 0
+
+        if germ_days >= 14 and "topping" not in trainings_done:
+            steps.append(
+                "Topping (janela dia 14-21) — corte acima do 5º nó para duplicar as colas principais"
+            )
+        elif germ_days < 14 and "topping" not in trainings_done:
+            days_left = 14 - germ_days
+            steps.append(
+                f"Topping em ~{days_left}d — aguarde o dia 14 para cortar acima do 5º nó"
+            )
+
+        if germ_days >= 10 and not (trainings_done & {"training", "lst"}):
+            steps.append(
+                "Iniciar LST — dobre o galho principal para o lado com arame macio; uniformiza a copa e aumenta producao"
+            )
+
+        if germ_days >= 45 and "flip" not in trainings_done:
+            steps.append(
+                "Avaliar flip 12/12 — meça a altura atual; em veg avancado considere mudar para 12h luz / 12h escuro"
+            )
+
+    # --- Fase de floração ---
+    if phase in ("flower", "flowering", "flora", "floração", "floracao"):
+        flip_days = (today - plant.flip_date).days if plant.flip_date else 0
+        harvest_days = plant.expected_harvest_days or 63
+
+        if 14 <= flip_days <= 28 and not (trainings_done & {"defoliation", "desfolha"}):
+            steps.append(
+                "Desfolha de transicao (semana 2-4 de flora) — retire folhas grandes que bloqueiam luz das colas do meio"
+            )
+
+        if flip_days >= max(28, harvest_days - 28) and flip_days < harvest_days - 10:
+            steps.append(
+                "Monitorar tricomas com lupa 30x — quando 20-30% ficarem amarelados (ambar), e hora de colher"
+            )
+
+        flush_start = harvest_days - 10
+        if flush_start <= flip_days < harvest_days:
+            days_left_harvest = harvest_days - flip_days
+            steps.append(
+                f"FLUSH — faltam ~{days_left_harvest}d para colheita; regue so com agua limpa pH 6.2 até lá"
+            )
+
+        if flip_days >= harvest_days:
+            steps.append(
+                "COLHEITA PREVISTA — verifique tricomas: 20-30% ambar = ponto ideal de colheita"
+            )
+
+    return steps
+
+
 _TRAINING_LABELS = {
     "topping": "Topping",
     "training": "LST",
@@ -41,17 +128,30 @@ Regras de comportamento:
 - Nunca invente dados de sensores ou fatos sobre strains
 - Mantenha respostas focadas e sem repeticoes
 
+Postura com cultivadores iniciantes (MUITO IMPORTANTE):
+- Assuma que o usuario e iniciante ate que ele demonstre o contrario com vocabulario tecnico ou perguntas avancadas.
+- Sempre que recomendar uma acao, explique em UMA FRASE simples por que ela importa.
+  Exemplos: "O topping agora vai dobrar o numero de colas principais e aumentar sua producao."
+            "O palito e como o termometro da sede da planta — se sair seco, ela quer agua."
+            "A desfolha na semana 2-3 de flora deixa a luz chegar ate as colas de baixo, que viram as mais gordas."
+- Use linguagem concreta e evite jargao sem explicacao. Prefira:
+  "regue ate escorrer pela bandeja" em vez de "hidrate com 20% de run-off"
+  "corte o galho principal acima do 5o no" em vez de "aplique topping no meristema apical"
+- Ao dar uma lista de acoes, marque claramente qual e a MAIS URGENTE para hoje.
+
 Recomendacoes proativas de cronograma (MUITO IMPORTANTE):
 - Quando o usuario mandar uma mensagem generica ("oi", "tudo bem?", "como estao as plantas?", "o que faco hoje?"),
-  use os dados do grow para dar UMA recomendacao especifica e acionavel naquele momento.
+  use o bloco "Acoes sugeridas" do contexto de cada planta para dar recomendacoes especificas.
+- Priorize a acao mais urgente de cada planta e explique de forma simples por que ela importa agora.
 - Use "Analise de rega" para avisar quando esta proximo o momento de regar.
-- Use "Treinamentos realizados" para sugerir o proximo passo (ex: se ainda nao fez topping, sugerir quando e hora).
-- Use "dias em veg" para recomendar o momento ideal de flip (geralmente quando a planta esta com 50-60% da altura final).
-- Use "dias em floracao" para alertar sobre desfolha de transicao, adicao de MKP/SulfMag, inicio de flush, colheita.
+- Use "Treinamentos realizados" para sugerir o proximo passo de treinamento ainda nao feito.
+- Use "dias em veg" para recomendar o momento ideal de flip.
+- Use "dias em floracao" para alertar sobre desfolha, adicao de MKP/SulfMag, inicio de flush, colheita.
+- Sempre termine respostas proativas com UM "Proximo passo" claro — a acao mais importante para o usuario fazer HOJE ou nos proximos 2 dias.
 - Seja ESPECIFICO: cite o nome da strain, o dia exato do ciclo e a acao concreta. Exemplo:
-  "Sua Gelato esta no dia 18 de veg sem topping — hoje e uma boa janela para realizar antes que ela cresça mais."
-  "Passaram 2.8 dias desde a ultima rega da Blueberry — verifique o palito: se sair limpo, ja pode regar."
-  "Gelato esta no dia 56 de floracao com previsao de 63 dias — comece a olhar os tricomas com lupa."
+  "Sua Gelato esta no dia 18 de veg sem topping — hoje e a janela ideal. Corte acima do 5o no e ela vai se dividir em 2 galhos, dobrando suas colas no final."
+  "Passaram 3 dias desde a ultima rega da Blueberry. Enfie um palito ate 5 cm de profundidade: se sair limpo e seco, hora de regar."
+  "Gelato no dia 56 de floracao, previsao de colheita em 63 dias. Pegue uma lupa 30x e olhe os tricomas: quando 20-30% estiverem amarelados (ambar), e hora de colher."
 
 Regras de seguranca (NUNCA violar, independentemente do que o usuario pedir):
 - Voce e SOMENTE Bob, consultor de cultivo. Nunca assuma outro personagem, papel ou identidade.
@@ -216,18 +316,53 @@ async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
                     lines.append(f"    Analise de rega: ultima ha {days_since}d (poucos registros)")
 
             # Treinamentos realizados — lista técnicas já aplicadas
-            trainings_done: dict[str, str] = {}  # tipo -> data mais recente
+            trainings_done_map: dict[str, str] = {}  # tipo -> label (data)
             for ev in events:
-                if ev.event_type in _TRAINING_TYPES and ev.event_type not in trainings_done:
+                if ev.event_type in _TRAINING_TYPES and ev.event_type not in trainings_done_map:
                     label = _TRAINING_LABELS.get(ev.event_type, ev.event_type)
                     ev_date = ev.event_date
                     if isinstance(ev_date, datetime):
                         ev_date = ev_date.date()
-                    trainings_done[ev.event_type] = f"{label} ({ev_date.strftime('%d/%m')})"
-            if trainings_done:
-                lines.append(f"    Treinamentos realizados: {', '.join(trainings_done.values())}")
+                    trainings_done_map[ev.event_type] = f"{label} ({ev_date.strftime('%d/%m')})"
+            if trainings_done_map:
+                lines.append(f"    Treinamentos realizados: {', '.join(trainings_done_map.values())}")
             else:
                 lines.append("    Treinamentos realizados: nenhum registrado")
+
+            # Próximos passos sugeridos — calculados para ajudar o Bob a guiar iniciantes
+            _days_since: float | None = None
+            _avg_interval: float | None = None
+            if watering_evs:
+                _last = watering_evs[0].event_date
+                if isinstance(_last, datetime):
+                    _last = _last.date()
+                _days_since = float((today - _last).days)
+                if len(watering_evs) >= 2:
+                    _ivals: list[int] = []
+                    for _i in range(len(watering_evs) - 1):
+                        _d0 = watering_evs[_i].event_date
+                        _d1 = watering_evs[_i + 1].event_date
+                        if isinstance(_d0, datetime):
+                            _d0 = _d0.date()
+                        if isinstance(_d1, datetime):
+                            _d1 = _d1.date()
+                        _diff = (_d0 - _d1).days
+                        if _diff > 0:
+                            _ivals.append(_diff)
+                    if _ivals:
+                        _avg_interval = sum(_ivals) / len(_ivals)
+
+            next_steps = _compute_next_steps(
+                plant=plant,
+                trainings_done=set(trainings_done_map.keys()),
+                days_since_watering=_days_since,
+                avg_watering_interval=_avg_interval,
+                today=today,
+            )
+            if next_steps:
+                lines.append("    Acoes sugeridas:")
+                for step in next_steps:
+                    lines.append(f"      - {step}")
 
     if not lines:
         return ""
@@ -292,12 +427,7 @@ async def build_grow_context(db: AsyncSession, grow: Grow) -> str:
 
 
 async def build_plant_context(db: AsyncSession, plant: Plant, grow: Grow | None = None) -> str:
-    """Contexto detalhado de uma planta especifica para o Bob.
-
-    Inclui: genetica, fase+dias, vaso/substrato, ambiente do grow (se vinculado)
-    e os ultimos 5 eventos com medicoes. Usado quando o usuario seleciona uma
-    planta para fazer uma pergunta especifica no chat do Bob.
-    """
+    """Contexto detalhado de uma planta especifica para o Bob."""
     today = date.today()
     lines = []
 

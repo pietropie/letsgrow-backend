@@ -2,6 +2,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -537,3 +538,33 @@ async def get_bob_tip(
     from app.services.rag import generate_plant_tip
     tip = await generate_plant_tip(db, plant=plant, events=events)
     return tip  # None serializa como 204/null no FastAPI com response_model=X|None
+
+
+# ─── Daily Brief ──────────────────────────────────────────────────────────────
+
+class DailyBriefResponse(BaseModel):
+    """Briefing diário do Bob — gerado via LLM e cacheado 24h."""
+    title: str
+    body: str
+    urgent_count: int = 0
+
+
+@router.get("/daily-brief", response_model=DailyBriefResponse)
+async def get_daily_brief(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Retorna o briefing diário do Bob para o usuário: resumo proativo do que
+    precisa de atenção no cultivo hoje, gerado via LLM e cacheado 24h no Redis.
+
+    O frontend chama este endpoint ao abrir o app (1x por sessão) e exibe
+    um card "Bob hoje" no topo da home screen.
+    """
+    from app.services.daily_brief import generate_daily_brief
+    brief = await generate_daily_brief(db, current_user.id)
+    return DailyBriefResponse(
+        title=brief.title,
+        body=brief.body,
+        urgent_count=brief.urgent_count,
+    )
