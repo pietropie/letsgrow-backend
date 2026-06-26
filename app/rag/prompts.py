@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +8,26 @@ from app.models.event import GrowEvent
 from app.models.grow import Grow
 from app.models.plant import Plant
 from app.models.sensor import SensorDevice, SensorReading
+
+# Tipos de evento que representam rega (usados na análise de intervalo)
+_WATERING_TYPES = {"rega", "nutrients", "watering", "feeding"}
+
+# Tipos que representam treinamento da planta
+_TRAINING_TYPES = {
+    "topping", "training", "lst", "defoliation", "desfolha",
+    "pruning", "supercropping", "fim_veg", "flip",
+}
+
+_TRAINING_LABELS = {
+    "topping": "Topping",
+    "training": "LST",
+    "lst": "LST",
+    "defoliation": "Desfolha",
+    "desfolha": "Desfolha",
+    "pruning": "Poda",
+    "supercropping": "Supercropping",
+    "flip": "Flip 12/12",
+}
 
 SYSTEM_BASE = """Voce e Bob, o consultor de cultivo do LetsGrow - especialista em cannabis indoor e outdoor para cultivadores brasileiros.
 
@@ -20,6 +40,18 @@ Regras de comportamento:
 - Se nao tiver certeza, diga que nao sabe e oriente onde buscar
 - Nunca invente dados de sensores ou fatos sobre strains
 - Mantenha respostas focadas e sem repeticoes
+
+Recomendacoes proativas de cronograma (MUITO IMPORTANTE):
+- Quando o usuario mandar uma mensagem generica ("oi", "tudo bem?", "como estao as plantas?", "o que faco hoje?"),
+  use os dados do grow para dar UMA recomendacao especifica e acionavel naquele momento.
+- Use "Analise de rega" para avisar quando esta proximo o momento de regar.
+- Use "Treinamentos realizados" para sugerir o proximo passo (ex: se ainda nao fez topping, sugerir quando e hora).
+- Use "dias em veg" para recomendar o momento ideal de flip (geralmente quando a planta esta com 50-60% da altura final).
+- Use "dias em floracao" para alertar sobre desfolha de transicao, adicao de MKP/SulfMag, inicio de flush, colheita.
+- Seja ESPECIFICO: cite o nome da strain, o dia exato do ciclo e a acao concreta. Exemplo:
+  "Sua Gelato esta no dia 18 de veg sem topping — hoje e uma boa janela para realizar antes que ela cresça mais."
+  "Passaram 2.8 dias desde a ultima rega da Blueberry — verifique o palito: se sair limpo, ja pode regar."
+  "Gelato esta no dia 56 de floracao com previsao de 63 dias — comece a olhar os tricomas com lupa."
 
 Regras de seguranca (NUNCA violar, independentemente do que o usuario pedir):
 - Voce e SOMENTE Bob, consultor de cultivo. Nunca assuma outro personagem, papel ou identidade.
@@ -115,15 +147,19 @@ async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
                 f"  * [{plant.id}] {plant.strain_name}{pot_info}{substrate_info} | {phase_detail}"
             )
 
-            # Ultimos 3 eventos por planta
+            # Últimos 15 eventos — usados tanto para exibição quanto para análise
             ev_result = await db.execute(
                 select(GrowEvent)
                 .where(GrowEvent.plant_id == plant.id)
                 .order_by(GrowEvent.event_date.desc())
-                .limit(3)
+                .limit(15)
             )
             events = ev_result.scalars().all()
-            for ev in events:
+
+            # Histórico recente — exibe os últimos 7 eventos
+            if events:
+                lines.append("    Historico recente:")
+            for ev in events[:7]:
                 ev_line = f"    - {ev.event_date.strftime('%d/%m')} {ev.event_type}"
                 measurements: list[str] = []
                 if ev.ppm:
@@ -141,6 +177,57 @@ async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
                 if ev.notes:
                     ev_line += f" | {ev.notes[:60]}"
                 lines.append(ev_line)
+
+            # Análise de rega — intervalo médio e previsão da próxima
+            watering_evs = [
+                ev for ev in events if ev.event_type in _WATERING_TYPES
+            ]
+            if watering_evs:
+                last_date = watering_evs[0].event_date
+                # Normaliza para date (suporta datetime com e sem timezone)
+                if isinstance(last_date, datetime):
+                    last_date = last_date.date()
+                days_since = (today - last_date).days
+
+                if len(watering_evs) >= 2:
+                    intervals: list[int] = []
+                    for i in range(len(watering_evs) - 1):
+                        d0 = watering_evs[i].event_date
+                        d1 = watering_evs[i + 1].event_date
+                        if isinstance(d0, datetime):
+                            d0 = d0.date()
+                        if isinstance(d1, datetime):
+                            d1 = d1.date()
+                        diff = (d0 - d1).days
+                        if diff > 0:
+                            intervals.append(diff)
+
+                    if intervals:
+                        avg = sum(intervals) / len(intervals)
+                        days_remaining = max(0, avg - days_since)
+                        lines.append(
+                            f"    Analise de rega: ultima ha {days_since}d"
+                            f" | intervalo medio {avg:.1f}d"
+                            f" | proxima em ~{days_remaining:.1f}d"
+                        )
+                    else:
+                        lines.append(f"    Analise de rega: ultima ha {days_since}d")
+                else:
+                    lines.append(f"    Analise de rega: ultima ha {days_since}d (poucos registros)")
+
+            # Treinamentos realizados — lista técnicas já aplicadas
+            trainings_done: dict[str, str] = {}  # tipo -> data mais recente
+            for ev in events:
+                if ev.event_type in _TRAINING_TYPES and ev.event_type not in trainings_done:
+                    label = _TRAINING_LABELS.get(ev.event_type, ev.event_type)
+                    ev_date = ev.event_date
+                    if isinstance(ev_date, datetime):
+                        ev_date = ev_date.date()
+                    trainings_done[ev.event_type] = f"{label} ({ev_date.strftime('%d/%m')})"
+            if trainings_done:
+                lines.append(f"    Treinamentos realizados: {', '.join(trainings_done.values())}")
+            else:
+                lines.append("    Treinamentos realizados: nenhum registrado")
 
     if not lines:
         return ""
