@@ -381,7 +381,8 @@ class SegmentPreviewIn(BaseModel):
 
 
 class SegmentPreviewOut(BaseModel):
-    count: int
+    count: int           # total de usuários no segmento
+    pushable_count: int  # usuários com expo_push_token registrado
     sample_emails: list[str]
 
 

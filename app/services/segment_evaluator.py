@@ -71,8 +71,7 @@ async def evaluate_segment(
     today = date.today()
 
     q = select(User).where(
-        User.is_active == True,          # noqa: E712
-        User.expo_push_token.isnot(None),
+        User.is_active == True,  # noqa: E712
     )
 
     # ── Plano ────────────────────────────────────────────────────────────────
@@ -154,11 +153,14 @@ async def preview_segment(
     sample_size: int = 5,
 ) -> dict[str, Any]:
     """
-    Retorna contagem total e amostra de e-mails para preview no admin panel.
+    Retorna contagem total de usuários que atendem os filtros,
+    quantos deles têm push token (notificáveis), e uma amostra de e-mails.
     """
     users = await evaluate_segment(db, filters)
+    pushable = [u for u in users if u.expo_push_token]
     sample = [u.email for u in users[:sample_size]]
     return {
         "count": len(users),
+        "pushable_count": len(pushable),
         "sample_emails": sample,
     }
