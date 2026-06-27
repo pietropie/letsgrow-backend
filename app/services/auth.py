@@ -64,13 +64,22 @@ async def get_current_user(
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuário não encontrado ou inativo")
 
-    # Atualiza last_seen_at com debounce de 1h para não sobrecarregar o DB
-    now = datetime.now(_tz.utc)
-    last = user.last_seen_at
-    if last and last.tzinfo is None:
-        last = last.replace(tzinfo=_tz.utc)
-    if last is None or (now - last).total_seconds() > 3600:
-        user.last_seen_at = now
-        await db.commit()
+    # Atualiza last_seen_at com debounce de 1h
+    # Usa sessão separada para não interferir na transação do endpoint
+    try:
+        now = datetime.now(_tz.utc)
+        last = user.last_seen_at
+        if last and last.tzinfo is None:
+            last = last.replace(tzinfo=_tz.utc)
+        if last is None or (now - last).total_seconds() > 3600:
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as session:
+                result2 = await session.execute(select(User).where(User.id == user.id))
+                u = result2.scalar_one_or_none()
+                if u:
+                    u.last_seen_at = now
+                    await session.commit()
+    except Exception:
+        pass  # nunca bloqueia a requisição principal
 
     return user
