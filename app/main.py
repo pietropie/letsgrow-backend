@@ -29,14 +29,22 @@ async def lifespan(app: FastAPI):
         logger.info("MQTT listener started")
 
     # Scheduler de push diário (APScheduler)
-    from app.services.scheduler import scheduler, setup_daily_push
-    scheduler.start()
-    await setup_daily_push()
-    logger.info("APScheduler iniciado")
+    _scheduler = None
+    try:
+        from app.services.scheduler import scheduler, setup_daily_push
+        scheduler.start()
+        await setup_daily_push()
+        _scheduler = scheduler
+        logger.info("APScheduler iniciado")
+    except ImportError:
+        logger.warning("apscheduler não instalado — scheduler de push desabilitado")
+    except Exception as exc:
+        logger.warning("Falha ao iniciar scheduler: %s", exc)
 
     yield
 
-    scheduler.shutdown(wait=False)
+    if _scheduler is not None:
+        _scheduler.shutdown(wait=False)
 
     if mqtt_task:
         mqtt_task.cancel()
