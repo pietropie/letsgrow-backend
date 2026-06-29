@@ -21,6 +21,7 @@ from app.api.v1 import (
     strains,
     uploads,
     users,
+    weather,
 )
 
 api_router = APIRouter()
@@ -46,3 +47,4 @@ api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(diary.router, prefix="/diary", tags=["diary"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 api_router.include_router(feature_flags.public_router, tags=["feature-flags"])
+api_router.include_router(weather.router, tags=["weather"])
