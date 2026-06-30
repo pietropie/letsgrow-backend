@@ -58,8 +58,14 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
-        docs_url="/docs" if settings.DEBUG else None,
-        redoc_url="/redoc" if settings.DEBUG else None,
+        description=(
+            "API do Let's Grow — plataforma de cultivo assistida por IA.\n\n"
+            "**Autenticação:** `Bearer <JWT>` em todos os endpoints protegidos.\n"
+            "Endpoints `/admin/*` exigem `X-Admin-Token: <ADMIN_TOKEN>` no header."
+        ),
+        docs_url="/api-docs",
+        redoc_url="/api-redoc",
+        openapi_url="/api-docs/openapi.json",
         lifespan=lifespan,
     )
 
