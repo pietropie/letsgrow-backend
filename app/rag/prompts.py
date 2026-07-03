@@ -18,6 +18,104 @@ _TRAINING_TYPES = {
     "pruning", "supercropping", "fim_veg", "flip",
 }
 
+# Labels legíveis para subtipos de nutrição
+_NUTRIENT_SUBTYPE_LABELS: dict[str, str] = {
+    "base": "feed base",
+    "booster": "booster de floração",
+    "suplemento": "suplemento",
+    "foliar": "foliar",
+}
+
+# Labels legíveis para subtipos de treinamento
+_TRAINING_SUBTYPE_LABELS: dict[str, str] = {
+    "topping": "Topping",
+    "fim": "FIM",
+    "lst": "LST",
+    "supercropping": "Supercropping",
+    "lollipopping": "Lollipopping",
+    "schwazzing": "Schwazzing",
+}
+
+
+def _format_event_line(ev: "GrowEvent") -> str:
+    """Formata uma linha de evento com todos os campos disponíveis para o Bob."""
+    ev_line = f"    - {ev.event_date.strftime('%d/%m')} [{ev.event_type}]"
+    parts: list[str] = []
+
+    # Subtipo de nutrição ou treinamento
+    if ev.nutrient_subtype:
+        parts.append(_NUTRIENT_SUBTYPE_LABELS.get(ev.nutrient_subtype, ev.nutrient_subtype))
+    if ev.training_subtype:
+        parts.append(_TRAINING_SUBTYPE_LABELS.get(ev.training_subtype, ev.training_subtype))
+    if ev.is_flush:
+        parts.append("FLUSH (água pura)")
+
+    # Rega — entrada
+    if ev.ppm is not None:
+        parts.append(f"PPM entrada {ev.ppm}")
+    if ev.ph_in is not None:
+        parts.append(f"pH entrada {ev.ph_in}")
+    if ev.water_volume_ml is not None:
+        parts.append(f"{ev.water_volume_ml:.0f}ml")
+
+    # Rega — saída (runoff)
+    if ev.has_runoff is not None:
+        parts.append("runoff ✓" if ev.has_runoff else "SEM runoff ⚠")
+    if ev.ph_out is not None:
+        parts.append(f"pH runoff {ev.ph_out}")
+    if ev.ec_out is not None:
+        parts.append(f"EC runoff {ev.ec_out}")
+
+    # Tricomas
+    if ev.trichome_clear_pct is not None or ev.trichome_milky_pct is not None or ev.trichome_amber_pct is not None:
+        clear = ev.trichome_clear_pct or 0
+        milky = ev.trichome_milky_pct or 0
+        amber = ev.trichome_amber_pct or 0
+        parts.append(f"tricomas: {clear}% transp / {milky}% leitosos / {amber}% âmbar")
+
+    # Ambiente
+    if ev.temperature_c is not None:
+        parts.append(f"{ev.temperature_c}°C")
+    if ev.humidity_rh is not None:
+        parts.append(f"{ev.humidity_rh}% UR")
+
+    # Peso
+    if ev.weight_g is not None:
+        parts.append(f"{ev.weight_g}g")
+
+    # Sintoma
+    if ev.severity:
+        parts.append(f"severidade {ev.severity}")
+
+    # Metadata — campos semi-estruturados
+    if ev.metadata:
+        meta_parts: list[str] = []
+        if ev.metadata.get("symptom_type"):
+            meta_parts.append(f"sintoma: {ev.metadata['symptom_type']}")
+        if ev.metadata.get("symptom_location"):
+            meta_parts.append(f"localização: {ev.metadata['symptom_location']}")
+        if ev.metadata.get("soil_wet") is not None:
+            meta_parts.append("solo úmido" if ev.metadata["soil_wet"] else "solo seco")
+        if ev.metadata.get("harvest_method"):
+            meta_parts.append(f"método: {ev.metadata['harvest_method']}")
+        if ev.metadata.get("defoliation_type"):
+            meta_parts.append(f"defoliação: {ev.metadata['defoliation_type']}")
+        if ev.metadata.get("node_number"):
+            meta_parts.append(f"nó #{ev.metadata['node_number']}")
+        if ev.metadata.get("jar_humidity_rh"):
+            meta_parts.append(f"UR pote {ev.metadata['jar_humidity_rh']}%")
+        if ev.metadata.get("drying_temp_c"):
+            meta_parts.append(f"secagem {ev.metadata['drying_temp_c']}°C")
+        if meta_parts:
+            parts.extend(meta_parts)
+
+    if parts:
+        ev_line += " | " + ", ".join(parts)
+    if ev.notes:
+        ev_line += f" | nota: {ev.notes[:80]}"
+
+    return ev_line
+
 def _compute_next_steps(
     plant: "Plant",
     trainings_done: set[str],
@@ -256,27 +354,11 @@ async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
             )
             events = ev_result.scalars().all()
 
-            # Histórico recente — exibe os últimos 7 eventos
+            # Histórico recente — exibe os últimos 7 eventos com todos os campos
             if events:
                 lines.append("    Historico recente:")
             for ev in events[:7]:
-                ev_line = f"    - {ev.event_date.strftime('%d/%m')} {ev.event_type}"
-                measurements: list[str] = []
-                if ev.ppm:
-                    measurements.append(f"PPM {ev.ppm}")
-                if ev.ph_in:
-                    measurements.append(f"pH {ev.ph_in}")
-                if ev.water_volume_ml:
-                    measurements.append(f"{ev.water_volume_ml}ml")
-                if ev.temperature_c:
-                    measurements.append(f"{ev.temperature_c}C")
-                if ev.humidity_rh:
-                    measurements.append(f"{ev.humidity_rh}% UR")
-                if measurements:
-                    ev_line += f" | {', '.join(measurements)}"
-                if ev.notes:
-                    ev_line += f" | {ev.notes[:60]}"
-                lines.append(ev_line)
+                lines.append(_format_event_line(ev))
 
             # Análise de rega — intervalo médio e previsão da próxima
             watering_evs = [
@@ -414,14 +496,7 @@ async def build_grow_context(db: AsyncSession, grow: Grow) -> str:
         )
         events = ev_result.scalars().all()
         for ev in events:
-            ev_line = f"  - {ev.event_date.strftime('%d/%m')} {ev.event_type}"
-            if ev.ppm:
-                ev_line += f" | PPM: {ev.ppm}"
-            if ev.ph_in:
-                ev_line += f" | pH: {ev.ph_in}"
-            if ev.notes:
-                ev_line += f" | {ev.notes[:60]}"
-            lines.append(ev_line)
+            lines.append(_format_event_line(ev))
 
     return "\n".join(lines)
 
@@ -494,24 +569,6 @@ async def build_plant_context(db: AsyncSession, plant: Plant, grow: Grow | None 
     if events:
         lines.append("\nUltimos registros:")
         for ev in events:
-            ev_line = f"  {ev.event_date.strftime('%d/%m')} {ev.event_type}"
-            measurements = []
-            if ev.ppm:
-                measurements.append(f"PPM {ev.ppm}")
-            if ev.ph_in:
-                measurements.append(f"pH entrada {ev.ph_in}")
-            if ev.ph_out:
-                measurements.append(f"pH saida {ev.ph_out}")
-            if ev.water_volume_ml:
-                measurements.append(f"{ev.water_volume_ml}ml")
-            if ev.temperature_c:
-                measurements.append(f"{ev.temperature_c}C")
-            if ev.humidity_rh:
-                measurements.append(f"{ev.humidity_rh}% UR")
-            if measurements:
-                ev_line += f" | {', '.join(measurements)}"
-            if ev.notes:
-                ev_line += f" | {ev.notes[:80]}"
-            lines.append(ev_line)
+            lines.append(_format_event_line(ev))
 
     return "\n".join(lines)

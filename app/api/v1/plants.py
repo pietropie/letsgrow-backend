@@ -547,6 +547,12 @@ class DailyBriefResponse(BaseModel):
     title: str
     body: str
     urgent_count: int = 0
+    severity: str = "ok"                    # "ok" | "attention" | "urgent"
+    plant_id: str | None = None             # UUID da planta mais relevante
+    plant_name: str | None = None           # nome da strain mais relevante
+    cta_prompt: str = ""                    # pergunta pré-preenchida para abrir o Bob
+    generated_at: str = ""                  # ISO UTC timestamp da geração
+    reason_tags: list[str] = []             # ["rega", "floração", "flush"] (máx 4)
 
 
 @router.get("/daily-brief", response_model=DailyBriefResponse)
@@ -567,4 +573,10 @@ async def get_daily_brief(
         title=brief.title,
         body=brief.body,
         urgent_count=brief.urgent_count,
+        severity=brief.severity,
+        plant_id=brief.plant_id,
+        plant_name=brief.plant_name,
+        cta_prompt=brief.cta_prompt,
+        generated_at=brief.generated_at,
+        reason_tags=brief.reason_tags,
     )
