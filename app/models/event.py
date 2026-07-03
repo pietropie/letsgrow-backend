@@ -26,49 +26,51 @@ class GrowEvent(Base):
         DateTime(timezone=True), nullable=False, index=True
     )
 
-    # ── Rega: entrada ────────────────────────────────────────────────────────
-    ppm: Mapped[float | None] = mapped_column(Float, nullable=True)            # PPM/EC de entrada
-    ph_in: Mapped[float | None] = mapped_column(Float, nullable=True)          # pH da água de entrada
+    # -- Rega: entrada
+    ppm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ph_in: Mapped[float | None] = mapped_column(Float, nullable=True)
     water_volume_ml: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # ── Rega: saída (runoff) — diagnóstico de acúmulo de sais e pH do solo ──
-    ph_out: Mapped[float | None] = mapped_column(Float, nullable=True)         # pH do runoff
-    ec_out: Mapped[float | None] = mapped_column(Float, nullable=True)         # EC/PPM do runoff
-    has_runoff: Mapped[bool | None] = mapped_column(Boolean, nullable=True)    # houve escoamento?
+    # -- Rega: saida (runoff) -- diagnostico de acumulo de sais e pH do solo
+    ph_out: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ec_out: Mapped[float | None] = mapped_column(Float, nullable=True)
+    has_runoff: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
-    # ── Nutrição: subtipo ────────────────────────────────────────────────────
+    # -- Nutricao: subtipo
     # "base" | "booster" | "suplemento" | "foliar"
     nutrient_subtype: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
-    # ── Treinamento: subtipo ─────────────────────────────────────────────────
+    # -- Treinamento: subtipo
     # "topping" | "fim" | "lst" | "supercropping" | "lollipopping" | "schwazzing"
     training_subtype: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
-    # ── Tricomas: % de cada estágio para decisão de colheita ─────────────────
+    # -- Tricomas: % de cada estagio para decisao de colheita
     trichome_clear_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trichome_milky_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trichome_amber_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # ── Ambiente e medições físicas ───────────────────────────────────────────
+    # -- Ambiente e medicoes fisicas
     temperature_c: Mapped[float | None] = mapped_column(Float, nullable=True)
     humidity_rh: Mapped[float | None] = mapped_column(Float, nullable=True)
-    weight_g: Mapped[float | None] = mapped_column(Float, nullable=True)       # peso úmido/seco/colheita
+    weight_g: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # ── Diagnóstico ───────────────────────────────────────────────────────────
-    severity: Mapped[str | None] = mapped_column(String(10), nullable=True)    # "leve" | "moderado" | "grave"
+    # -- Diagnostico
+    severity: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
-    # Watering — True quando não levou nutrientes (flush ou água pura)
+    # Watering -- True quando nao levou nutrientes (flush ou agua pura)
     is_flush: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_keys: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
-    # ── Catch-all para campos semi-estruturados ───────────────────────────────
+    # -- Catch-all para campos semi-estruturados
     # Ex: {"harvest_method": "wet_trim", "symptom_type": "amarelamento",
     #      "symptom_location": "folhas velhas", "soil_wet": true,
     #      "node_number": 4, "drying_temp_c": 19, "jar_humidity_rh": 62,
     #      "dry_crack_test": true, "defoliation_type": "schwazzing"}
-    metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # ATENCAO: "metadata" e reservado pelo SQLAlchemy Declarative API.
+    # Atributo Python = event_metadata; coluna no banco = "metadata".
+    event_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

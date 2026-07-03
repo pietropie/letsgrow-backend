@@ -88,24 +88,24 @@ def _format_event_line(ev: "GrowEvent") -> str:
         parts.append(f"severidade {ev.severity}")
 
     # Metadata — campos semi-estruturados
-    if ev.metadata:
+    if ev.event_metadata:
         meta_parts: list[str] = []
-        if ev.metadata.get("symptom_type"):
-            meta_parts.append(f"sintoma: {ev.metadata['symptom_type']}")
-        if ev.metadata.get("symptom_location"):
-            meta_parts.append(f"localização: {ev.metadata['symptom_location']}")
-        if ev.metadata.get("soil_wet") is not None:
-            meta_parts.append("solo úmido" if ev.metadata["soil_wet"] else "solo seco")
-        if ev.metadata.get("harvest_method"):
-            meta_parts.append(f"método: {ev.metadata['harvest_method']}")
-        if ev.metadata.get("defoliation_type"):
-            meta_parts.append(f"defoliação: {ev.metadata['defoliation_type']}")
-        if ev.metadata.get("node_number"):
-            meta_parts.append(f"nó #{ev.metadata['node_number']}")
-        if ev.metadata.get("jar_humidity_rh"):
-            meta_parts.append(f"UR pote {ev.metadata['jar_humidity_rh']}%")
-        if ev.metadata.get("drying_temp_c"):
-            meta_parts.append(f"secagem {ev.metadata['drying_temp_c']}°C")
+        if ev.event_metadata.get("symptom_type"):
+            meta_parts.append(f"sintoma: {ev.event_metadata['symptom_type']}")
+        if ev.event_metadata.get("symptom_location"):
+            meta_parts.append(f"localização: {ev.event_metadata['symptom_location']}")
+        if ev.event_metadata.get("soil_wet") is not None:
+            meta_parts.append("solo úmido" if ev.event_metadata["soil_wet"] else "solo seco")
+        if ev.event_metadata.get("harvest_method"):
+            meta_parts.append(f"método: {ev.event_metadata['harvest_method']}")
+        if ev.event_metadata.get("defoliation_type"):
+            meta_parts.append(f"defoliação: {ev.event_metadata['defoliation_type']}")
+        if ev.event_metadata.get("node_number"):
+            meta_parts.append(f"nó #{ev.event_metadata['node_number']}")
+        if ev.event_metadata.get("jar_humidity_rh"):
+            meta_parts.append(f"UR pote {ev.event_metadata['jar_humidity_rh']}%")
+        if ev.event_metadata.get("drying_temp_c"):
+            meta_parts.append(f"secagem {ev.event_metadata['drying_temp_c']}°C")
         if meta_parts:
             parts.extend(meta_parts)
 

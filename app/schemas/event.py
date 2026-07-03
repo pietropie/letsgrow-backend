@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class EventCreate(BaseModel):
@@ -120,8 +120,12 @@ class EventResponse(BaseModel):
 
     notes: str | None
     photo_keys: list[str] | None
-    metadata: dict[str, Any] | None
+
+    # "metadata" e reservado pelo SQLAlchemy Declarative API.
+    # Atributo ORM = event_metadata; coluna DB = "metadata".
+    # serialization_alias garante que o JSON de resposta continue usando "metadata".
+    event_metadata: dict[str, Any] | None = Field(None, serialization_alias="metadata")
 
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}

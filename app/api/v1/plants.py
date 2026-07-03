@@ -385,7 +385,10 @@ async def create_event(
     """Cria um evento para a planta e atualiza a fase automaticamente quando necessário."""
     plant = await _get_plant_or_404(plant_id, current_user.id, db)
 
-    event = GrowEvent(plant_id=plant_id, **body.model_dump())
+    # Remapear "metadata" (Pydantic) → "event_metadata" (SQLAlchemy)
+    event_data = body.model_dump()
+    event_data["event_metadata"] = event_data.pop("metadata", None)
+    event = GrowEvent(plant_id=plant_id, **event_data)
     db.add(event)
 
     # Auto-update plant phase on special event types
@@ -427,7 +430,11 @@ async def update_event(
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evento não encontrado")
 
-    for field, value in body.model_dump(exclude_unset=True).items():
+    # Remapear "metadata" (Pydantic) → "event_metadata" (SQLAlchemy)
+    update_data = body.model_dump(exclude_unset=True)
+    if "metadata" in update_data:
+        update_data["event_metadata"] = update_data.pop("metadata")
+    for field, value in update_data.items():
         setattr(event, field, value)
     await db.commit()
     await db.refresh(event)
@@ -574,7 +581,7 @@ async def get_daily_brief(
         body=brief.body,
         urgent_count=brief.urgent_count,
         severity=brief.severity,
-        plant_id=brief.plant_id,
+        plant_id=str(brief.plant_id) if brief.plant_id else None,
         plant_name=brief.plant_name,
         cta_prompt=brief.cta_prompt,
         generated_at=brief.generated_at,
