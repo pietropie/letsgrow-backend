@@ -1,5 +1,6 @@
+import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -8,16 +9,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.ai_config import AIConfig
+from app.models.event import GrowEvent
 from app.models.grow import Grow
 from app.models.knowledge import AIConversation
 from app.models.plant import Plant
 from app.models.user import User
 from app.services.auth import get_current_user
+from app.services.bob_accountability import upsert_actionable_recommendations
+from app.services.bob_env import load_latest_sensor_env
+from app.services.bob_rules import compute_bob_steps
 from app.services.guard import guard_user_message
 from app.services.rag import chat
 from app.services.subscription import check_ai_limit
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -32,6 +38,10 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     conversation_id: uuid.UUID
     reply: str
+    recommendation_id: str | None = None   # UUID da BobRecommendation (quando acionavel)
+    action: str | None = None              # ex: "watering", "topping", "flush"
+    plant_id: str | None = None            # UUID da planta como string
+    plant_name: str | None = None
 
 
 class ConversationSummary(BaseModel):
@@ -107,6 +117,44 @@ async def chat_endpoint(
 
     reply = await chat(db, conversation, body.message, grow, plant, body.images or [])
 
+    # ── Recomendacao acionavel (dedup por user+plant+action) ──────────────────
+    rec_id: str | None = None
+    rec_action: str | None = None
+    rec_plant_id: str | None = None
+    rec_plant_name: str | None = None
+
+    if plant is not None:
+        try:
+            today = date.today()
+            events_result = await db.execute(
+                select(GrowEvent)
+                .where(GrowEvent.plant_id == plant.id)
+                .order_by(GrowEvent.event_date.desc())
+                .limit(15)
+            )
+            plant_events = events_result.scalars().all()
+            latest_temp, latest_humidity = await load_latest_sensor_env(db, plant.id)
+            steps = await compute_bob_steps(
+                plant,
+                plant_events,
+                today,
+                latest_temp=latest_temp,
+                latest_humidity=latest_humidity,
+            )
+
+            async with db.begin_nested():
+                rec = await upsert_actionable_recommendations(
+                    db, current_user.id, plant, steps
+                )
+                if rec is not None:
+                    await db.flush()
+                    rec_id = str(rec.id)
+                    rec_action = rec.action
+                    rec_plant_id = str(plant.id)
+                    rec_plant_name = rec.plant_name
+        except Exception as rec_err:
+            logger.warning("Falha ao processar BobRecommendation (chat nao afetado): %s", rec_err)
+
     now_iso = datetime.now(timezone.utc).isoformat()
     conversation.messages = [
         *conversation.messages,
@@ -117,7 +165,14 @@ async def chat_endpoint(
     current_user.ai_queries_this_month += 1
     await db.commit()
 
-    return ChatResponse(conversation_id=conversation.id, reply=reply)
+    return ChatResponse(
+        conversation_id=conversation.id,
+        reply=reply,
+        recommendation_id=rec_id,
+        action=rec_action,
+        plant_id=rec_plant_id,
+        plant_name=rec_plant_name,
+    )
 
 
 @router.get("/conversations", response_model=list[ConversationSummary])

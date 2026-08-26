@@ -20,6 +20,12 @@ class SensorDevice(Base):
         nullable=True,
         index=True,
     )
+    grow_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("grows.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     name: Mapped[str] = mapped_column(String(60), nullable=False)
     esp32_mac: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
@@ -46,6 +52,7 @@ class SensorDevice(Base):
     )
 
     plant = relationship("Plant", back_populates="sensor_devices")
+    grow = relationship("Grow", back_populates="sensor_devices")
     readings = relationship(
         "SensorReading", back_populates="device", cascade="all, delete-orphan"
     )

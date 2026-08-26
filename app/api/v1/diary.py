@@ -15,6 +15,8 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Any
+
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,19 +73,28 @@ class DiaryBulkCreate(BaseModel):
     """Cria o mesmo evento em múltiplas plantas de uma só vez (usado pelo diário global)."""
 
     plant_ids: list[uuid.UUID] = Field(..., min_length=1)
+    grow_id: uuid.UUID | None = None
     event_type: str
     event_date: datetime
     ppm: float | None = None
     ph_in: float | None = None
-    ph_out: float | None = None
     water_volume_ml: float | None = None
+    ph_out: float | None = None
+    ec_out: float | None = None
+    has_runoff: bool | None = None
+    nutrient_subtype: str | None = None
+    is_flush: bool | None = None
+    training_subtype: str | None = None
+    trichome_clear_pct: int | None = None
+    trichome_milky_pct: int | None = None
+    trichome_amber_pct: int | None = None
     temperature_c: float | None = None
     humidity_rh: float | None = None
     weight_g: float | None = None
     severity: str | None = None
-    is_flush: bool | None = None
     notes: str | None = None
     photo_keys: list[str] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -179,14 +190,22 @@ async def create_diary_entries(
     )
     owned_plants: dict[uuid.UUID, Plant] = {p.id: p for p in plants_result.scalars().all()}
 
-    if len(owned_plants) != len(body.plant_ids):
+    if len(owned_plants) != len(set(body.plant_ids)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Uma ou mais plantas nao pertencem ao usuario",
         )
 
-    # Cria um GrowEvent para cada planta
-    event_fields = body.model_dump(exclude={"plant_ids"})
+    if body.grow_id is not None:
+        mismatched = [p for p in owned_plants.values() if p.grow_id != body.grow_id]
+        if mismatched:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Todas as plantas do registro multiplo devem pertencer ao mesmo grow",
+            )
+
+    event_fields = body.model_dump(exclude={"plant_ids", "grow_id"})
+    event_fields["event_metadata"] = event_fields.pop("metadata", None)
     created_events: list[GrowEvent] = []
     for plant_id in body.plant_ids:
         ev = GrowEvent(plant_id=plant_id, **event_fields)
@@ -196,6 +215,17 @@ async def create_diary_entries(
     await db.commit()
     for ev in created_events:
         await db.refresh(ev)
+
+    from app.services.bob_accountability import run_event_side_effects
+
+    for ev in created_events:
+        plant = owned_plants.get(ev.plant_id)
+        if plant is not None:
+            await run_event_side_effects(db, plant, ev, current_user.id)
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
     # Busca imagens de strain por nome
     strain_names = {p.strain_name for p in owned_plants.values() if p.strain_name}
@@ -207,6 +237,7 @@ async def create_diary_entries(
 @router.get("", response_model=list[DiaryEntryResponse])
 async def get_diary_feed(
     plant_id: uuid.UUID | None = Query(None, description="Filtrar por planta específica"),
+    grow_id: uuid.UUID | None = Query(None, description="Filtrar por grow"),
     event_type: str | None = Query(None, description="Filtrar por tipo de evento"),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -229,7 +260,14 @@ async def get_diary_feed(
         return []
 
     plant_map: dict[uuid.UUID, Plant] = {p.id: p for p in plants}
-    target_ids = [plant_id] if plant_id else list(plant_map.keys())
+    if plant_id:
+        target_ids = [plant_id]
+    elif grow_id:
+        target_ids = [p.id for p in plants if p.grow_id == grow_id]
+        if not target_ids:
+            return []
+    else:
+        target_ids = list(plant_map.keys())
 
     # 2. Eventos paginados
     q = (

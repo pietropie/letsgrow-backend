@@ -41,6 +41,7 @@ PATCH /iot/devices/{id}.
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import aiomqtt
@@ -101,7 +102,7 @@ async def _handle_telemetry(mac: str, payload: dict) -> None:
 # Discovery handler
 # ---------------------------------------------------------------------------
 
-async def _handle_discovery(hub_mac: str, payload: dict) -> None:
+async def _handle_discovery(hub_mac: str, payload: dict, grow_id: uuid.UUID | None = None) -> None:
     """
     Called when a hub publishes to letsgrow/{grow_id}/hub/{hub_mac}/discovery.
 
@@ -130,6 +131,7 @@ async def _handle_discovery(hub_mac: str, payload: dict) -> None:
             # name is a placeholder until the grower assigns a real name
             name=f"Satellite {satellite_mac}",
             esp32_mac=satellite_mac,
+            grow_id=grow_id,
             module_type="satellite",
             hub_mac=hub_mac.upper(),
             is_paired=False,
@@ -190,7 +192,12 @@ async def run_mqtt_listener() -> None:
                             and parts[4] == "discovery"
                         ):
                             hub_mac = parts[3]
-                            await _handle_discovery(hub_mac, payload)
+                            parsed_grow_id = None
+                            try:
+                                parsed_grow_id = uuid.UUID(parts[1])
+                            except ValueError:
+                                parsed_grow_id = None
+                            await _handle_discovery(hub_mac, payload, parsed_grow_id)
 
                         # letsgrow/{grow_id}/{device_mac}/telemetry   -> 4 parts
                         elif len(parts) == 4 and parts[3] == "telemetry":

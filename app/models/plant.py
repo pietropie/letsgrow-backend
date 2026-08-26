@@ -17,9 +17,8 @@ class Plant(Base, TimestampMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # Vínculo opcional com um grow registrado. SET NULL ao deletar o grow.
-    grow_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("grows.id", ondelete="SET NULL"), nullable=True, index=True
+    grow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grows.id", ondelete="RESTRICT"), nullable=False, index=True
     )
 
     strain_name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -40,7 +39,7 @@ class Plant(Base, TimestampMixin):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Grouping label — free text, e.g. "Armário Jun/25"
+    # Legado — filtros usam grow_id. Coluna permanece um release para backfill.
     grow_label: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
     # Pot / container info (optional)
@@ -49,6 +48,7 @@ class Plant(Base, TimestampMixin):
     substrate: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     user = relationship("User", back_populates="plants")
+    grow = relationship("Grow", back_populates="plants")
     events = relationship(
         "GrowEvent", back_populates="plant", cascade="all, delete-orphan", order_by="GrowEvent.event_date.desc()"
     )

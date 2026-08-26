@@ -18,8 +18,8 @@ class PlantCreate(BaseModel):
     current_phase: str = "germination"
     # germination | seedling | veg | flower | harvest | done
     expected_harvest_days: int | None = None
-    grow_id: uuid.UUID | None = None    # vínculo relacional com grows
-    grow_label: str | None = None       # fallback texto livre (legado)
+    grow_id: uuid.UUID
+    grow_label: str | None = None       # legado; ignorado na criacao
     pot_label: str | None = None
     pot_volume_liters: float | None = None
     substrate: str | None = None
@@ -56,7 +56,7 @@ class PlantResponse(BaseModel):
     harvest_date: date | None
     expected_harvest_days: int | None
     is_active: bool
-    grow_id: uuid.UUID | None
+    grow_id: uuid.UUID
     grow_label: str | None
     pot_label: str | None
     pot_volume_liters: float | None
@@ -73,9 +73,9 @@ class PlantDetailResponse(PlantResponse):
 
 
 class BobTipResponse(BaseModel):
-    """Dica contextual do Bob para a planta — gerada por regras + LLM."""
-    scenario: str       # "flip_soon" | "water_due" | "fert_due" | "pre_harvest" | "seedling"
-    tip: str            # Texto em linguagem natural no estilo Bob
+    """Dica contextual do Bob — sempre derivada de compute_bob_steps."""
+    scenario: str       # water_due | flip_soon | pre_harvest | fert_due | topping | training | defoliation | env_critical
+    tip: str            # Texto pronto do motor de regras (voz do Bob)
     priority: str       # "info" | "warning" | "urgent"
     icon: str           # Emoji representando o cenário
 
@@ -83,8 +83,7 @@ class BobTipResponse(BaseModel):
 class PlantSummary(BaseModel):
     """Resumo para o card da home: últimas leituras de ambiente, PPM e rega.
 
-    Temperatura/umidade são compartilhadas entre plantas do mesmo `grow_label`
-    (ver lógica em app/api/v1/plants.py::_compute_plant_summary).
+    Temperatura/umidade são compartilhadas entre plantas do mesmo grow.
     """
     plant_id: uuid.UUID
     last_temperature_c: float | None = None

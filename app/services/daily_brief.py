@@ -14,7 +14,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -23,24 +23,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.event import GrowEvent
 from app.models.plant import Plant
-from app.rag.prompts import (
-    _TRAINING_TYPES,
-    _WATERING_TYPES,
-    _compute_next_steps,
-)
 from app.services import ai_provider
+from app.services.bob_accountability import upsert_actionable_recommendations
+from app.services.bob_env import load_latest_sensor_env
+from app.services.bob_rules import BobStep, compute_bob_steps
 from app.services.redis_client import _get_redis
 
 logger = logging.getLogger(__name__)
 
 _BRIEF_TTL = 86_400  # 24 horas
+_BRAZIL_TZ = timezone(timedelta(hours=-3))
 
 Severity = Literal["ok", "attention", "urgent"]
 
 
 @dataclass
 class DailyBrief:
-    title: str                          # ex: "🚨 Bob: Gelato precisa de atenção agora"
+    title: str                          # ex: "🚨 Bob: Gelato precisa de ação agora"
     body: str                           # texto gerado pelo LLM (2-3 frases)
     urgent_count: int                   # quantas ações urgentes (para priorizar push)
     severity: Severity = "ok"           # ok | attention | urgent — controla cor do card
@@ -49,6 +48,7 @@ class DailyBrief:
     cta_prompt: str = ""                # pergunta pré-preenchida para abrir o Bob
     generated_at: str = ""             # ISO UTC timestamp da geração
     reason_tags: list[str] = field(default_factory=list)  # ["rega","floração","flush"]
+    has_anomaly: bool = False           # True se tier=="anomaly" em qualquer planta
 
 
 # ─── Cache Redis (JSON único por usuário) ─────────────────────────────────────
@@ -63,7 +63,18 @@ async def get_cached_brief(user_id: uuid.UUID) -> DailyBrief | None:
         raw = await r.get(_cache_key(user_id))
         if raw:
             data = json.loads(raw)
-            return DailyBrief(**data)
+            return DailyBrief(
+                title=data["title"],
+                body=data["body"],
+                urgent_count=data["urgent_count"],
+                severity=data.get("severity", "ok"),
+                plant_id=data.get("plant_id"),
+                plant_name=data.get("plant_name"),
+                cta_prompt=data.get("cta_prompt", ""),
+                generated_at=data.get("generated_at", ""),
+                reason_tags=data.get("reason_tags", []),
+                has_anomaly=data.get("has_anomaly", False),
+            )
     except Exception as exc:
         logger.warning("Redis get daily_brief falhou: %s", exc)
     return None
@@ -82,6 +93,7 @@ async def cache_brief(user_id: uuid.UUID, brief: DailyBrief) -> None:
             "cta_prompt": brief.cta_prompt,
             "generated_at": brief.generated_at,
             "reason_tags": brief.reason_tags,
+            "has_anomaly": brief.has_anomaly,
         })
         await r.set(_cache_key(user_id), payload, ex=_BRIEF_TTL)
     except Exception as exc:
@@ -101,8 +113,8 @@ async def invalidate_brief(user_id: uuid.UUID) -> None:
 
 # ─── Análise de plantas ───────────────────────────────────────────────────────
 
-async def _load_plant_steps(db: AsyncSession, plant: Plant, today: date) -> list[str]:
-    """Carrega últimos 15 eventos da planta e computa ações sugeridas."""
+async def _load_plant_steps(db: AsyncSession, plant: Plant, today: date) -> list[BobStep]:
+    """Carrega últimos 15 eventos e retorna BobSteps do motor unificado."""
     ev_result = await db.execute(
         select(GrowEvent)
         .where(GrowEvent.plant_id == plant.id)
@@ -110,62 +122,17 @@ async def _load_plant_steps(db: AsyncSession, plant: Plant, today: date) -> list
         .limit(15)
     )
     events = ev_result.scalars().all()
-
-    trainings_done: set[str] = set()
-    for ev in events:
-        if ev.event_type in _TRAINING_TYPES:
-            trainings_done.add(ev.event_type)
-
-    watering_evs = [ev for ev in events if ev.event_type in _WATERING_TYPES]
-    days_since: float | None = None
-    avg_interval: float | None = None
-
-    if watering_evs:
-        last = watering_evs[0].event_date
-        if isinstance(last, datetime):
-            last = last.date()
-        days_since = float((today - last).days)
-
-        if len(watering_evs) >= 2:
-            ivals: list[int] = []
-            for i in range(len(watering_evs) - 1):
-                d0 = watering_evs[i].event_date
-                d1 = watering_evs[i + 1].event_date
-                if isinstance(d0, datetime):
-                    d0 = d0.date()
-                if isinstance(d1, datetime):
-                    d1 = d1.date()
-                diff = (d0 - d1).days
-                if diff > 0:
-                    ivals.append(diff)
-            if ivals:
-                avg_interval = sum(ivals) / len(ivals)
-
-    return _compute_next_steps(
-        plant=plant,
-        trainings_done=trainings_done,
-        days_since_watering=days_since,
-        avg_watering_interval=avg_interval,
-        today=today,
+    latest_temp, latest_humidity = await load_latest_sensor_env(db, plant.id)
+    return await compute_bob_steps(
+        plant,
+        list(events),
+        today,
+        latest_temp=latest_temp,
+        latest_humidity=latest_humidity,
     )
 
 
 # ─── Extração de reason_tags ──────────────────────────────────────────────────
-
-_TAG_KEYWORDS: list[tuple[str, str]] = [
-    ("REGA", "rega"),
-    ("FLUSH", "flush"),
-    ("COLHEITA", "colheita"),
-    ("TOPPING", "poda"),
-    ("PODA", "poda"),
-    ("DESFOLHA", "desfolha"),
-    ("NUTRIÇÃO", "nutrição"),
-    ("NUTRIENTES", "nutrição"),
-    ("LST", "treinamento"),
-    ("SUPERCROP", "treinamento"),
-    ("SCROG", "treinamento"),
-    ("TRANSPLANTE", "transplante"),
-]
 
 _PHASE_TAGS: dict[str, str] = {
     "germination": "germinação",
@@ -175,21 +142,32 @@ _PHASE_TAGS: dict[str, str] = {
     "harvest": "colheita",
 }
 
+_ACTION_TO_TAG: dict[str, str] = {
+    "watering": "rega",
+    "flush": "flush",
+    "harvest": "colheita",
+    "topping": "poda",
+    "lst": "treinamento",
+    "desfolha": "desfolha",
+    "mkp": "nutrição",
+    "flip": "floração",
+}
+
 
 def _extract_reason_tags(
-    plant_steps: list[tuple[str, list[str]]],
+    plant_steps: list[tuple[str, list[BobStep]]],
     plants: list[Plant],
 ) -> list[str]:
-    """Deriva tags legíveis a partir dos steps + fases das plantas."""
+    """Deriva tags legíveis a partir dos steps (via step.action) + fases das plantas."""
     tags: list[str] = []
     seen: set[str] = set()
 
-    full_text = " ".join(s for _, steps in plant_steps for s in steps).upper()
-
-    for keyword, tag in _TAG_KEYWORDS:
-        if keyword in full_text and tag not in seen:
-            tags.append(tag)
-            seen.add(tag)
+    for _, steps in plant_steps:
+        for step in steps:
+            tag = _ACTION_TO_TAG.get(step.action)
+            if tag and tag not in seen:
+                tags.append(tag)
+                seen.add(tag)
 
     for plant in plants:
         phase_tag = _PHASE_TAGS.get(plant.current_phase or "", "")
@@ -219,23 +197,30 @@ def _build_cta_prompt(
 
 # ─── Geração via LLM ─────────────────────────────────────────────────────────
 
-_BRIEF_SYSTEM = """Voce e Bob, consultor de cultivo do LetsGrow.
-Gere um briefing diario CURTO (2-3 frases) para o cultivador sobre o que precisa de atencao hoje.
-- Priorize a acao mais urgente
-- Explique brevemente POR QUE ela importa (em linguagem simples para iniciantes)
-- Termine com encorajamento ou uma dica rapida
-- Use portugues brasileiro informal e amigavel
-- NAO use listas, apenas texto corrido
-- Maximo 60 palavras no total"""
+_BRIEF_SYSTEM = """Você é o Bob, companion de cultivo do Let's Grow.
+Gere um briefing diário CURTÍSSIMO (2-3 frases) para o cultivador.
+- Priorize a ação mais urgente (🔴 crítico > 🟠 anomalia > 🟡 atenção)
+- Se há algo crítico, seja direto: "HOJE você precisa..." — sem rodeios
+- Explique brevemente o motivo em linguagem simples
+- Tom WhatsApp: sem lista, sem formalidade, máx 50 palavras
+- Termine com pergunta ou convite à ação"""
+
+_TIER_PREFIX: dict[str, str] = {
+    "critical": "🔴",
+    "anomaly": "🟠",
+    "attention": "🟡",
+    "info": "🟢",
+}
 
 
-async def _generate_brief_text(plant_steps: list[tuple[str, list[str]]]) -> str:
+async def _generate_brief_text(plant_steps: list[tuple[str, list[BobStep]]]) -> str:
     lines: list[str] = []
     for strain_name, steps in plant_steps:
         if steps:
             lines.append(f"{strain_name}:")
-            for step in steps[:2]:
-                lines.append(f"  - {step}")
+            for step in steps[:2]:  # top 2 por planta
+                prefix = _TIER_PREFIX.get(step.tier, "-")
+                lines.append(f"  {prefix} {step.message}")
 
     if not lines:
         return "Tudo em dia no seu cultivo! Aproveite para observar as plantas e registrar qualquer mudança no diário."
@@ -255,7 +240,7 @@ async def _generate_brief_text(plant_steps: list[tuple[str, list[str]]]) -> str:
         logger.error("LLM brief falhou: %s", exc)
         for _, steps in plant_steps:
             if steps:
-                return steps[0]
+                return steps[0].message
         return "Confira suas plantas hoje e registre qualquer novidade no diário."
 
 
@@ -276,7 +261,7 @@ async def generate_daily_brief(
         if cached:
             return cached
 
-    today = date.today()
+    today = datetime.now(_BRAZIL_TZ).date()
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Busca plantas ativas
@@ -300,47 +285,61 @@ async def generate_daily_brief(
         await cache_brief(user_id, brief)
         return brief
 
-    # Computa ações por planta
-    plant_steps: list[tuple[str, list[str]]] = []
-    total_urgent = 0
-    urgent_plant: Plant | None = None
-
+    # Computa ações por planta e persiste recomendações acionáveis (dedup)
+    plant_steps: list[tuple[str, list[BobStep]]] = []
     for plant in plants:
         steps = await _load_plant_steps(db, plant, today)
         plant_steps.append((plant.strain_name or "Planta", steps))
-        n_urgent = sum(
-            1 for s in steps
-            if any(kw in s.upper() for kw in ("URGENTE", "COLHEITA", "FLUSH"))
-        )
-        if n_urgent and urgent_plant is None:
-            urgent_plant = plant
-        total_urgent += n_urgent
+        try:
+            await upsert_actionable_recommendations(db, user_id, plant, steps)
+        except Exception as exc:
+            logger.warning("Bob: falha ao persistir recomendacoes do brief: %s", exc)
+    try:
+        await db.commit()
+    except Exception as exc:
+        logger.warning("Bob: commit de recomendacoes do brief falhou: %s", exc)
+        await db.rollback()
 
-    # Severity
-    has_any_steps = any(steps for _, steps in plant_steps)
-    if total_urgent > 0:
+    # Contagem de tiers para severity
+    all_steps: list[BobStep] = [s for _, steps in plant_steps for s in steps]
+    n_critical = sum(1 for s in all_steps if s.tier == "critical")
+    n_anomaly = sum(1 for s in all_steps if s.tier == "anomaly")
+    has_any_steps = bool(all_steps)
+
+    if n_critical > 0:
         severity: Severity = "urgent"
-    elif has_any_steps:
+    elif n_anomaly > 0 or has_any_steps:
         severity = "attention"
     else:
         severity = "ok"
 
-    # Planta principal (urgente ou a primeira)
-    main_plant = urgent_plant or plants[0]
+    has_anomaly = n_anomaly > 0
+
+    # Coletar todas as plantas críticas
+    critical_plants: list[Plant] = [
+        plant
+        for plant, (_, steps) in zip(plants, plant_steps)
+        if any(s.tier == "critical" for s in steps)
+    ]
+
+    # Planta principal (primeira crítica ou primeira da lista)
+    main_plant = critical_plants[0] if critical_plants else plants[0]
     plant_id_str = str(main_plant.id)
     plant_name = main_plant.strain_name or "Planta"
 
     # Tags
-    reason_tags = _extract_reason_tags(plant_steps, plants)
+    reason_tags = _extract_reason_tags(plant_steps, list(plants))
 
     # Gera texto via LLM
     body = await _generate_brief_text(plant_steps)
 
-    # Título
-    if severity == "urgent":
-        title = f"🚨 Bob: {plant_name} precisa de atenção agora"
+    # Título dinâmico
+    if len(critical_plants) > 1:
+        title = f"🚨 Bob: {len(critical_plants)} plantas precisam de ação hoje"
+    elif len(critical_plants) == 1:
+        title = f"🚨 Bob: {critical_plants[0].strain_name} precisa de ação HOJE"
     elif severity == "attention":
-        title = f"🌿 Bob: dicas de hoje para o seu cultivo"
+        title = "🌿 Bob: tem coisas para cuidar hoje"
     else:
         title = "✅ Bob: tudo em dia no cultivo!"
 
@@ -350,13 +349,14 @@ async def generate_daily_brief(
     brief = DailyBrief(
         title=title,
         body=body,
-        urgent_count=total_urgent,
+        urgent_count=n_critical,
         severity=severity,
         plant_id=plant_id_str,
         plant_name=plant_name,
         cta_prompt=cta_prompt,
         generated_at=now_iso,
         reason_tags=reason_tags,
+        has_anomaly=has_anomaly,
     )
     await cache_brief(user_id, brief)
     return brief

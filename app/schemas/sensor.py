@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class DeviceRegister(BaseModel):
     plant_id: uuid.UUID | None = None
+    grow_id: uuid.UUID | None = None
     name: str
     esp32_mac: str
     sensors_config: dict = {}
@@ -27,7 +28,11 @@ class DevicePatch(BaseModel):
 
     plant_id: uuid.UUID | None = Field(
         default=None,
-        description="UUID da planta a que o sensor sera atribuido.",
+        description="UUID da planta (solo/nutricao).",
+    )
+    grow_id: uuid.UUID | None = Field(
+        default=None,
+        description="UUID do grow (ambiente/PPFD/hub). Inferido da planta se omitido.",
     )
     name: str | None = Field(
         default=None,
@@ -41,7 +46,6 @@ class DevicePatch(BaseModel):
 class DeviceResponse(BaseModel):
     id: uuid.UUID
     plant_id: uuid.UUID | None
-    # grow_id is resolved server-side via plant.grow_id (not stored on sensor_devices)
     grow_id: uuid.UUID | None = None
     name: str
     esp32_mac: str

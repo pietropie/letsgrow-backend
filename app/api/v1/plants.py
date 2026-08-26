@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Optional
 
@@ -10,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.services.storage import strain_image_url_for_response
 from app.models.event import GrowEvent
+from app.models.grow import Grow
 from app.models.plant import Plant
 from app.models.strain import Strain
 from app.models.user import User
@@ -26,10 +28,32 @@ from app.schemas.common import MessageResponse
 from app.services.auth import get_current_user
 from app.services.subscription import check_ai_limit, check_plant_limit
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 # Event types considered "watering" for last_watering_* — frontend uses "rega"
 WATERING_EVENT_TYPES = ("rega", "watering")
+
+
+async def _run_bob_event_hooks(
+    db: AsyncSession,
+    plant: Plant,
+    event: GrowEvent,
+    user_id,
+) -> None:
+    """Anomalia + fecha recomendacoes cobertas pelo evento. Nunca quebra o request."""
+    from app.services.bob_accountability import run_event_side_effects
+
+    await run_event_side_effects(db, plant, event, user_id)
+    try:
+        await db.commit()
+    except Exception as exc:
+        logger.warning("Bob event hook commit falhou: %s", exc)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
 
 async def _get_plant_or_404(plant_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Plant:
@@ -51,25 +75,22 @@ async def _latest_env_reading(
     *,
     user_id: uuid.UUID,
     plant_ids: list[uuid.UUID],
-    grow_label: str | None,
+    grow_id: uuid.UUID | None,
     field: str,
 ):
     """Retorna (valor, event_date) do evento mais recente com `field` preenchido.
 
-    Implementa o "compartilhamento por grow_label" do item 3: se `grow_label`
-    não for nulo, considera eventos de TODAS as plantas do usuário com o mesmo
-    grow_label; caso contrário, considera apenas os eventos de `plant_ids`
-    (tipicamente uma única planta).
+    Ambiente e compartilhado entre plantas do mesmo grow.
     """
     column = getattr(GrowEvent, field)
 
-    if grow_label:
+    if grow_id:
         stmt = (
             select(column, GrowEvent.event_date)
             .join(Plant, Plant.id == GrowEvent.plant_id)
             .where(
                 Plant.user_id == user_id,
-                Plant.grow_label == grow_label,
+                Plant.grow_id == grow_id,
                 column.is_not(None),
             )
             .order_by(GrowEvent.event_date.desc())
@@ -124,22 +145,18 @@ async def _latest_ppm_event(db: AsyncSession, plant_id: uuid.UUID) -> GrowEvent 
 async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary:
     user_id = plant.user_id
 
-    if plant.grow_label:
-        # Plantas do mesmo usuário/grow_label compartilham temperatura e umidade
+    sibling_ids = [plant.id]
+    if plant.grow_id:
         result = await db.execute(
-            select(Plant.id).where(
-                Plant.user_id == user_id, Plant.grow_label == plant.grow_label
-            )
+            select(Plant.id).where(Plant.user_id == user_id, Plant.grow_id == plant.grow_id)
         )
-        sibling_ids = [row[0] for row in result.all()]
-    else:
-        sibling_ids = [plant.id]
+        sibling_ids = [row[0] for row in result.all()] or [plant.id]
 
     last_temp, last_temp_at = await _latest_env_reading(
-        db, user_id=user_id, plant_ids=sibling_ids, grow_label=plant.grow_label, field="temperature_c"
+        db, user_id=user_id, plant_ids=sibling_ids, grow_id=plant.grow_id, field="temperature_c"
     )
     last_hum, last_hum_at = await _latest_env_reading(
-        db, user_id=user_id, plant_ids=sibling_ids, grow_label=plant.grow_label, field="humidity_rh"
+        db, user_id=user_id, plant_ids=sibling_ids, grow_id=plant.grow_id, field="humidity_rh"
     )
 
     last_ppm_event = await _latest_ppm_event(db, plant.id)
@@ -184,14 +201,17 @@ async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary
 
 @router.get("", response_model=list[PlantResponse])
 async def list_plants(
-    grow_label: Optional[str] = Query(default=None, description="Filtrar por grow_label"),
+    grow_id: Optional[uuid.UUID] = Query(default=None, description="Filtrar por grow"),
+    grow_label: Optional[str] = Query(default=None, description="Legado — preferir grow_id"),
     is_active: Optional[bool] = Query(default=None, description="Filtrar por status ativo"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Lista todas as plantas do usuário autenticado."""
     stmt = select(Plant).where(Plant.user_id == current_user.id)
-    if grow_label is not None:
+    if grow_id is not None:
+        stmt = stmt.where(Plant.grow_id == grow_id)
+    elif grow_label is not None:
         stmt = stmt.where(Plant.grow_label == grow_label)
     if is_active is not None:
         stmt = stmt.where(Plant.is_active == is_active)
@@ -210,17 +230,30 @@ async def create_plant(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Cria uma nova planta vinculada diretamente ao usuário."""
-    # Verifica limite de plantas do plano antes de criar
+    """Cria uma nova planta vinculada a um grow do usuario."""
+    grow_result = await db.execute(
+        select(Grow).where(Grow.id == body.grow_id, Grow.user_id == current_user.id)
+    )
+    grow = grow_result.scalar_one_or_none()
+    if not grow:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+    if grow.status == "abandoned":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é possível criar planta em um grow arquivado",
+        )
+
     count_result = await db.execute(
         select(func.count(Plant.id)).where(
             Plant.user_id == current_user.id,
-            Plant.is_active == True,
+            Plant.is_active == True,  # noqa: E712
         )
     )
     check_plant_limit(current_user, count_result.scalar_one())
 
-    plant = Plant(user_id=current_user.id, **body.model_dump())
+    payload = body.model_dump()
+    payload["grow_label"] = grow.name
+    plant = Plant(user_id=current_user.id, **payload)
     db.add(plant)
     await db.commit()
     await db.refresh(plant)
@@ -309,7 +342,21 @@ async def update_plant(
 ):
     """Atualiza campos da planta. Apenas campos enviados são alterados."""
     plant = await _get_plant_or_404(plant_id, current_user.id, db)
-    for field, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    if "grow_id" in updates and updates["grow_id"] is not None:
+        grow_result = await db.execute(
+            select(Grow).where(Grow.id == updates["grow_id"], Grow.user_id == current_user.id)
+        )
+        grow = grow_result.scalar_one_or_none()
+        if not grow:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+        if grow.status == "abandoned":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Não é possível mover planta para um grow arquivado",
+            )
+        updates["grow_label"] = grow.name
+    for field, value in updates.items():
         setattr(plant, field, value)
     await db.commit()
     await db.refresh(plant)
@@ -403,9 +450,7 @@ async def create_event(
     await db.commit()
     await db.refresh(event)
 
-    # Invalida cache de dica do Bob para esta planta (novo evento pode mudar o cenário)
-    from app.services.rag import invalidate_plant_tip_cache
-    invalidate_plant_tip_cache(plant_id)
+    await _run_bob_event_hooks(db, plant, event, current_user.id)
 
     return event
 
@@ -422,7 +467,7 @@ async def update_event(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_plant_or_404(plant_id, current_user.id, db)
+    plant = await _get_plant_or_404(plant_id, current_user.id, db)
     result = await db.execute(
         select(GrowEvent).where(GrowEvent.id == event_id, GrowEvent.plant_id == plant_id)
     )
@@ -438,6 +483,9 @@ async def update_event(
         setattr(event, field, value)
     await db.commit()
     await db.refresh(event)
+
+    await _run_bob_event_hooks(db, plant, event, current_user.id)
+
     return event
 
 

@@ -10,8 +10,16 @@ from app.models.grow import Grow
 from app.models.plant import Plant
 from app.models.user import User
 from app.schemas.common import MessageResponse
-from app.schemas.grow import GrowCreate, GrowResponse, GrowSummary, GrowUpdate
+from app.schemas.grow import (
+    GrowCreate,
+    GrowDetailResponse,
+    GrowPlantBrief,
+    GrowResponse,
+    GrowSummary,
+    GrowUpdate,
+)
 from app.services.auth import get_current_user
+from app.services.grow_env import latest_grow_env
 from app.services.subscription import check_grow_limit
 
 router = APIRouter()
@@ -27,6 +35,13 @@ async def _get_grow_or_404(grow_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSess
     return grow
 
 
+def _grow_response(grow: Grow, env=None) -> GrowResponse:
+    data = GrowResponse.model_validate(grow)
+    if env is not None:
+        data.env = env
+    return data
+
+
 @router.get("", response_model=list[GrowSummary])
 async def list_grows(
     current_user: User = Depends(get_current_user),
@@ -40,10 +55,10 @@ async def list_grows(
     summaries = []
     for grow in grows:
         active_plant_result = await db.execute(
-            select(func.count(Plant.id))
-            .where(Plant.grow_id == grow.id, Plant.is_active == True)
+            select(func.count(Plant.id)).where(Plant.grow_id == grow.id, Plant.is_active == True)  # noqa: E712
         )
         active_count = active_plant_result.scalar() or 0
+        env = await latest_grow_env(db, grow.id)
 
         summaries.append(
             GrowSummary(
@@ -52,9 +67,11 @@ async def list_grows(
                 grow_type=grow.grow_type,
                 status=grow.status,
                 start_date=grow.start_date,
+                photoperiod_hours=grow.photoperiod_hours,
                 pot_count=0,
                 active_plant_count=active_count,
                 days_running=(date.today() - grow.start_date).days,
+                env=env,
             )
         )
     return summaries
@@ -76,16 +93,25 @@ async def create_grow(
     db.add(grow)
     await db.commit()
     await db.refresh(grow)
-    return grow
+    return _grow_response(grow)
 
 
-@router.get("/{grow_id}", response_model=GrowResponse)
+@router.get("/{grow_id}", response_model=GrowDetailResponse)
 async def get_grow(
     grow_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _get_grow_or_404(grow_id, current_user.id, db)
+    grow = await _get_grow_or_404(grow_id, current_user.id, db)
+    plants_result = await db.execute(
+        select(Plant).where(Plant.grow_id == grow.id).order_by(Plant.created_at.desc())
+    )
+    plants = plants_result.scalars().all()
+    env = await latest_grow_env(db, grow.id)
+    detail = GrowDetailResponse.model_validate(grow)
+    detail.env = env
+    detail.plants = [GrowPlantBrief.model_validate(p) for p in plants]
+    return detail
 
 
 @router.patch("/{grow_id}", response_model=GrowResponse)
@@ -100,7 +126,7 @@ async def update_grow(
         setattr(grow, field, value)
     await db.commit()
     await db.refresh(grow)
-    return grow
+    return _grow_response(grow, await latest_grow_env(db, grow.id))
 
 
 @router.delete("/{grow_id}", response_model=MessageResponse)

@@ -1,5 +1,6 @@
 from app.models.ai_config import AIConfig
 from app.models.base import Base
+from app.models.bob import BobAnomaly, BobRecommendation
 from app.models.event import GrowEvent
 from app.models.feature_flag import FeatureFlag
 from app.models.grow import Grow
@@ -16,6 +17,8 @@ __all__ = [
     "User",
     "Plant",
     "GrowEvent",
+    "BobAnomaly",
+    "BobRecommendation",
     "SensorDevice",
     "SensorReading",
     "KnowledgeChunk",
@@ -24,7 +27,6 @@ __all__ = [
     "AIConfig",
     "PlanConfig",
     "FeatureFlag",
-    # Legacy — kept for Alembic migration history, not used in new code
     "Grow",
     "Pot",
 ]
