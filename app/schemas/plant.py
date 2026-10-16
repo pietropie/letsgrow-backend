@@ -1,21 +1,24 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
+from app.schemas.grow import EnvironmentMeasurement
 
 from app.schemas.event import EventResponse
 
 
 class PlantCreate(BaseModel):
-    strain_name: str
-    strain_type: str = "photo"
+    display_name: str | None = Field(default=None, max_length=100)
+    strain_name: str = Field(default="", max_length=100)
+    strain_type: str = "unknown"
     # photo | auto
     genetics: str | None = None
     # indica | sativa | hybrid
-    seed_type: str = "feminized"
+    seed_type: str = "unknown"
     # feminized | regular | autoflower
     germination_date: date | None = None
-    current_phase: str = "germination"
+    current_phase: str = "unknown"
+    flip_date: date | None = None
     # germination | seedling | veg | flower | harvest | done
     expected_harvest_days: int | None = None
     grow_id: uuid.UUID
@@ -24,9 +27,18 @@ class PlantCreate(BaseModel):
     pot_volume_liters: float | None = None
     substrate: str | None = None
 
+    @model_validator(mode="after")
+    def validate_identity(self):
+        self.display_name = (self.display_name or "").strip() or None
+        self.strain_name = self.strain_name.strip()
+        if not self.display_name and not self.strain_name:
+            raise ValueError("Informe um nome para identificar a planta")
+        return self
+
 
 class PlantUpdate(BaseModel):
-    strain_name: str | None = None
+    display_name: str | None = Field(default=None, max_length=100)
+    strain_name: str | None = Field(default=None, max_length=100)
     strain_type: str | None = None
     genetics: str | None = None
     seed_type: str | None = None
@@ -42,10 +54,23 @@ class PlantUpdate(BaseModel):
     pot_volume_liters: float | None = None
     substrate: str | None = None
 
+    @field_validator("grow_id", "strain_name", "strain_type", "seed_type", "current_phase", "is_active")
+    @classmethod
+    def non_nullable_fields(cls, value):
+        if value is None:
+            raise ValueError("Este campo não pode ser nulo")
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("display_name")
+    @classmethod
+    def trim_display_name(cls, value):
+        return (value or "").strip() or None
+
 
 class PlantResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
+    display_name: str | None = None
     strain_name: str
     strain_type: str
     genetics: str | None
@@ -86,6 +111,8 @@ class PlantSummary(BaseModel):
     Temperatura/umidade são compartilhadas entre plantas do mesmo grow.
     """
     plant_id: uuid.UUID
+    temperature: EnvironmentMeasurement | None = None
+    humidity: EnvironmentMeasurement | None = None
     last_temperature_c: float | None = None
     last_temperature_at: datetime | None = None
     last_humidity_rh: float | None = None

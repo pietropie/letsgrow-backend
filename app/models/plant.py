@@ -21,16 +21,17 @@ class Plant(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("grows.id", ondelete="RESTRICT"), nullable=False, index=True
     )
 
-    strain_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    strain_type: Mapped[str] = mapped_column(String(20), default="photo", nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    strain_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    strain_type: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
     # photo | auto
     genetics: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # indica | sativa | hybrid
-    seed_type: Mapped[str] = mapped_column(String(20), default="feminized", nullable=False)
+    seed_type: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
     # feminized | regular | autoflower
 
     germination_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    current_phase: Mapped[str] = mapped_column(String(20), default="germination", nullable=False)
+    current_phase: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
     # germination | seedling | veg | flower | harvest | done
 
     flip_date: Mapped[date | None] = mapped_column(Date, nullable=True)

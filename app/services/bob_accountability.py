@@ -85,7 +85,7 @@ async def upsert_actionable_recommendations(
             rec = BobRecommendation(
                 user_id=user_id,
                 plant_id=plant.id,
-                plant_name=plant.strain_name or "Planta",
+                plant_name=plant.display_name or plant.strain_name or "Planta",
                 action=step.action,
                 recommended_at=now,
                 deadline=now + timedelta(hours=hours),

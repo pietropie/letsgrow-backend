@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.models.user import User
 from app.services.auth import get_current_user
+from app.services.upload_access import require_owned_upload
 from app.services.storage import BUCKET_AVATARS, BUCKET_EVENTS, presign_download, presign_upload
 
 router = APIRouter()
@@ -51,5 +52,6 @@ async def get_download_url(
     current_user: User = Depends(get_current_user),
 ):
     """Gera URL temporária para visualizar uma foto salva no MinIO."""
+    require_owned_upload(bucket, key, current_user.id)
     url = presign_download(bucket, key)
     return DownloadUrlResponse(url=url)

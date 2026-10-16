@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.services.storage import strain_image_url_for_response
+from app.services.storage import BUCKET_EVENTS, strain_image_url_for_response
+from app.services.upload_access import owns_upload, require_owned_event_photos
+from app.services.grow_env import latest_grow_measurements
 from app.models.event import GrowEvent
 from app.models.grow import Grow
 from app.models.plant import Plant
@@ -34,6 +36,16 @@ router = APIRouter()
 
 # Event types considered "watering" for last_watering_* — frontend uses "rega"
 WATERING_EVENT_TYPES = ("rega", "watering")
+
+
+def _private_event_response(event: GrowEvent, user_id: uuid.UUID) -> EventResponse:
+    response = EventResponse.model_validate(event)
+    return response.model_copy(update={
+        "photo_keys": [
+            key for key in (event.photo_keys or [])
+            if owns_upload(BUCKET_EVENTS, key, user_id)
+        ] or None,
+    })
 
 
 async def _run_bob_event_hooks(
@@ -70,50 +82,6 @@ async def _get_plant_or_404(plant_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSe
 # Summary helpers — shared between /summaries (batch) and /{plant_id}/summary
 # ---------------------------------------------------------------------------
 
-async def _latest_env_reading(
-    db: AsyncSession,
-    *,
-    user_id: uuid.UUID,
-    plant_ids: list[uuid.UUID],
-    grow_id: uuid.UUID | None,
-    field: str,
-):
-    """Retorna (valor, event_date) do evento mais recente com `field` preenchido.
-
-    Ambiente e compartilhado entre plantas do mesmo grow.
-    """
-    column = getattr(GrowEvent, field)
-
-    if grow_id:
-        stmt = (
-            select(column, GrowEvent.event_date)
-            .join(Plant, Plant.id == GrowEvent.plant_id)
-            .where(
-                Plant.user_id == user_id,
-                Plant.grow_id == grow_id,
-                column.is_not(None),
-            )
-            .order_by(GrowEvent.event_date.desc())
-            .limit(1)
-        )
-    else:
-        stmt = (
-            select(column, GrowEvent.event_date)
-            .where(
-                GrowEvent.plant_id.in_(plant_ids),
-                column.is_not(None),
-            )
-            .order_by(GrowEvent.event_date.desc())
-            .limit(1)
-        )
-
-    result = await db.execute(stmt)
-    row = result.first()
-    if row is None:
-        return None, None
-    return row[0], row[1]
-
-
 async def _latest_watering_event(db: AsyncSession, plant_id: uuid.UUID) -> GrowEvent | None:
     stmt = (
         select(GrowEvent)
@@ -143,21 +111,9 @@ async def _latest_ppm_event(db: AsyncSession, plant_id: uuid.UUID) -> GrowEvent 
 
 
 async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary:
-    user_id = plant.user_id
-
-    sibling_ids = [plant.id]
-    if plant.grow_id:
-        result = await db.execute(
-            select(Plant.id).where(Plant.user_id == user_id, Plant.grow_id == plant.grow_id)
-        )
-        sibling_ids = [row[0] for row in result.all()] or [plant.id]
-
-    last_temp, last_temp_at = await _latest_env_reading(
-        db, user_id=user_id, plant_ids=sibling_ids, grow_id=plant.grow_id, field="temperature_c"
-    )
-    last_hum, last_hum_at = await _latest_env_reading(
-        db, user_id=user_id, plant_ids=sibling_ids, grow_id=plant.grow_id, field="humidity_rh"
-    )
+    measurements = await latest_grow_measurements(db, plant.grow_id)
+    temperature = measurements['temperature']
+    humidity = measurements['humidity']
 
     last_ppm_event = await _latest_ppm_event(db, plant.id)
     last_ppm = last_ppm_event.ppm if last_ppm_event else None
@@ -184,10 +140,12 @@ async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary
 
     return PlantSummary(
         plant_id=plant.id,
-        last_temperature_c=last_temp,
-        last_temperature_at=last_temp_at,
-        last_humidity_rh=last_hum,
-        last_humidity_at=last_hum_at,
+        temperature=temperature,
+        humidity=humidity,
+        last_temperature_c=temperature.value,
+        last_temperature_at=temperature.observed_at,
+        last_humidity_rh=humidity.value,
+        last_humidity_at=humidity.observed_at,
         last_ppm=last_ppm,
         last_watering_at=last_watering_at,
         last_watering_has_fert=last_watering_has_fert,
@@ -326,7 +284,10 @@ async def get_plant(
     plant = result.scalar_one_or_none()
     if not plant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Planta não encontrada")
-    return plant
+    response = PlantDetailResponse.model_validate(plant)
+    return response.model_copy(update={
+        "events": [_private_event_response(event, current_user.id) for event in plant.events],
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +304,8 @@ async def update_plant(
     """Atualiza campos da planta. Apenas campos enviados são alterados."""
     plant = await _get_plant_or_404(plant_id, current_user.id, db)
     updates = body.model_dump(exclude_unset=True)
+    if not (updates.get("display_name", plant.display_name) or updates.get("strain_name", plant.strain_name)):
+        raise HTTPException(status_code=422, detail="Informe um nome para identificar a planta")
     if "grow_id" in updates and updates["grow_id"] is not None:
         grow_result = await db.execute(
             select(Grow).where(Grow.id == updates["grow_id"], Grow.user_id == current_user.id)
@@ -415,7 +378,7 @@ async def list_events(
         .order_by(GrowEvent.event_date.desc())
         .limit(limit)
     )
-    return result.scalars().all()
+    return [_private_event_response(event, current_user.id) for event in result.scalars().all()]
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +394,7 @@ async def create_event(
 ):
     """Cria um evento para a planta e atualiza a fase automaticamente quando necessário."""
     plant = await _get_plant_or_404(plant_id, current_user.id, db)
+    require_owned_event_photos(body.photo_keys, current_user.id)
 
     # Remapear "metadata" (Pydantic) → "event_metadata" (SQLAlchemy)
     event_data = body.model_dump()
@@ -477,6 +441,7 @@ async def update_event(
 
     # Remapear "metadata" (Pydantic) → "event_metadata" (SQLAlchemy)
     update_data = body.model_dump(exclude_unset=True)
+    require_owned_event_photos(update_data.get("photo_keys", event.photo_keys), current_user.id)
     if "metadata" in update_data:
         update_data["event_metadata"] = update_data.pop("metadata")
     for field, value in update_data.items():
@@ -543,6 +508,7 @@ async def analyze_event(
             detail="Este evento não possui fotos para analisar",
         )
 
+    require_owned_event_photos(event.photo_keys, current_user.id)
     from app.services.rag import analyze_event_photos
 
     try:

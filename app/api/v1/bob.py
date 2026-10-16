@@ -75,7 +75,7 @@ async def get_bob_alerts(
 
     # Mapa plant_id -> plant_name ja disponivel a partir das plantas carregadas
     plant_name_map: dict[uuid.UUID, str] = {
-        p.id: (p.strain_name or "Planta sem nome") for p in plants
+        p.id: (p.display_name or p.strain_name or "Planta sem nome") for p in plants
     }
 
     step_alerts: list[BobAlertResponse] = []
@@ -100,7 +100,7 @@ async def get_bob_alerts(
         )
 
         # 4. Filtrar apenas critical e anomaly; gerar alert_id deterministico
-        plant_name = plant.strain_name or "Planta sem nome"
+        plant_name = plant.display_name or plant.strain_name or "Planta sem nome"
         for step in steps:
             if step.tier not in ("critical", "anomaly"):
                 continue
@@ -141,10 +141,10 @@ async def get_bob_alerts(
     }
     if missing_plant_ids:
         extra_result = await db.execute(
-            select(Plant.id, Plant.strain_name).where(Plant.id.in_(missing_plant_ids))
+            select(Plant.id, Plant.strain_name, Plant.display_name).where(Plant.id.in_(missing_plant_ids))
         )
         for row in extra_result.all():
-            plant_name_map[row[0]] = row[1] or "Planta sem nome"
+            plant_name_map[row[0]] = row[2] or row[1] or "Planta sem nome"
 
     anomaly_alerts: list[BobAlertResponse] = [
         BobAlertResponse(

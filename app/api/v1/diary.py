@@ -12,12 +12,12 @@ Nota: Plant não possui FK strain_id — o vínculo é feito via Plant.strain_na
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from app.models.strain import Strain
 from app.models.user import User
 from app.services.auth import get_current_user
 from app.services.storage import BUCKET_EVENTS, presign_download, strain_image_url_for_response
+from app.services.upload_access import owns_upload, require_owned_event_photos
 
 router = APIRouter()
 
@@ -138,6 +139,11 @@ def _build_entry(
 ) -> DiaryEntryResponse:
     strain_name = plant.strain_name if plant else None
     strain_image_url = strain_image_map.get(strain_name.lower()) if strain_name else None
+    # Recheck persisted keys too: old records may predate upload validation.
+    photo_keys = [
+        key for key in (ev.photo_keys or [])
+        if plant is not None and owns_upload(BUCKET_EVENTS, key, plant.user_id)
+    ]
 
     return DiaryEntryResponse(
         id=ev.id,
@@ -154,11 +160,11 @@ def _build_entry(
         severity=ev.severity,
         is_flush=ev.is_flush,
         notes=ev.notes,
-        photo_keys=ev.photo_keys,
-        photo_urls=_event_photo_urls(ev.photo_keys),
+        photo_keys=photo_keys or None,
+        photo_urls=_event_photo_urls(photo_keys),
         created_at=ev.created_at,
-        plant_name=strain_name,
-        plant_nickname=getattr(plant, "nickname", None),
+        plant_name=(plant.display_name or strain_name or "Planta") if plant else None,
+        plant_nickname=plant.display_name if plant else None,
         strain_name=strain_name,
         strain_image_url=strain_image_url,
         current_phase=plant.current_phase if plant else None,
@@ -181,10 +187,12 @@ async def create_diary_entries(
     cada uma recebe um GrowEvent independente, que também aparece na tela
     individual de cada planta (pois ambas usam a mesma tabela grow_events).
     """
+    require_owned_event_photos(body.photo_keys, current_user.id)
+    plant_ids = list(dict.fromkeys(body.plant_ids))
     # Verifica que todas as plantas pertencem ao usuário
     plants_result = await db.execute(
         select(Plant).where(
-            Plant.id.in_(body.plant_ids),
+            Plant.id.in_(plant_ids),
             Plant.user_id == current_user.id,
         )
     )
@@ -207,7 +215,7 @@ async def create_diary_entries(
     event_fields = body.model_dump(exclude={"plant_ids", "grow_id"})
     event_fields["event_metadata"] = event_fields.pop("metadata", None)
     created_events: list[GrowEvent] = []
-    for plant_id in body.plant_ids:
+    for plant_id in plant_ids:
         ev = GrowEvent(plant_id=plant_id, **event_fields)
         db.add(ev)
         created_events.append(ev)
@@ -239,6 +247,9 @@ async def get_diary_feed(
     plant_id: uuid.UUID | None = Query(None, description="Filtrar por planta específica"),
     grow_id: uuid.UUID | None = Query(None, description="Filtrar por grow"),
     event_type: str | None = Query(None, description="Filtrar por tipo de evento"),
+    start_at: AwareDatetime | None = Query(None, description="Início inclusivo do período, com timezone"),
+    end_at: AwareDatetime | None = Query(None, description="Fim exclusivo do período, com timezone"),
+    include_archived: bool = Query(False, description="Incluir plantas arquivadas do usuário"),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
@@ -250,35 +261,42 @@ async def get_diary_feed(
     Cada entrada inclui o contexto da planta (nome da strain, foto, fase) para
     que o app possa renderizar cards ricos sem chamadas adicionais à API.
     """
-    # 1. Plantas do usuário
-    plants_result = await db.execute(
-        select(Plant).where(Plant.user_id == current_user.id, Plant.is_active == True)  # noqa: E712
-    )
+    if start_at is not None and end_at is not None and start_at >= end_at:
+        raise HTTPException(status_code=422, detail="O fim do período deve ser posterior ao início")
+    # 1. Plantas do usuário, incluindo histórico arquivado somente quando solicitado.
+    plant_query = select(Plant).where(Plant.user_id == current_user.id)
+    if not include_archived:
+        plant_query = plant_query.where(Plant.is_active.is_(True))
+    plants_result = await db.execute(plant_query)
     plants = plants_result.scalars().all()
 
     if not plants:
         return []
 
     plant_map: dict[uuid.UUID, Plant] = {p.id: p for p in plants}
-    if plant_id:
-        target_ids = [plant_id]
-    elif grow_id:
-        target_ids = [p.id for p in plants if p.grow_id == grow_id]
-        if not target_ids:
-            return []
-    else:
-        target_ids = list(plant_map.keys())
+    target_ids = [
+        p.id for p in plants
+        if (plant_id is None or p.id == plant_id)
+        and (grow_id is None or p.grow_id == grow_id)
+    ]
+    if not target_ids:
+        return []
 
     # 2. Eventos paginados
     q = (
         select(GrowEvent)
-        .where(GrowEvent.plant_id.in_(target_ids))
-        .order_by(GrowEvent.event_date.desc())
+        .join(Plant, Plant.id == GrowEvent.plant_id)
+        .where(GrowEvent.plant_id.in_(target_ids), Plant.user_id == current_user.id)
+        .order_by(GrowEvent.event_date.desc(), GrowEvent.id.desc())
         .limit(limit)
         .offset(offset)
     )
     if event_type:
         q = q.where(GrowEvent.event_type == event_type)
+    if start_at is not None:
+        q = q.where(GrowEvent.event_date >= start_at.astimezone(timezone.utc))
+    if end_at is not None:
+        q = q.where(GrowEvent.event_date < end_at.astimezone(timezone.utc))
 
     events_result = await db.execute(q)
     events = events_result.scalars().all()

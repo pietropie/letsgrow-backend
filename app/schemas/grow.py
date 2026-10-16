@@ -93,7 +93,20 @@ class GrowUpdate(BaseModel):
     notes: str | None = None
 
 
+class EnvironmentMeasurement(BaseModel):
+    value: float | None = None
+    unit: str
+    source: Literal["manual", "sensor"] | None = None
+    source_id: uuid.UUID | None = None
+    observed_at: datetime | None = None
+
+
 class GrowEnvSnapshot(BaseModel):
+    temperature: EnvironmentMeasurement = Field(default_factory=lambda: EnvironmentMeasurement(unit="°C"))
+    humidity: EnvironmentMeasurement = Field(default_factory=lambda: EnvironmentMeasurement(unit="%"))
+    light: EnvironmentMeasurement = Field(default_factory=lambda: EnvironmentMeasurement(unit="lux"))
+    vpd: EnvironmentMeasurement = Field(default_factory=lambda: EnvironmentMeasurement(unit="kPa"))
+    # Compatibility for older mobile versions. Use the per-indicator objects above.
     temp_c: float | None = None
     humidity_rh: float | None = None
     vpd_kpa: float | None = None
@@ -166,6 +179,7 @@ class GrowResponse(BaseModel):
 
 class GrowPlantBrief(BaseModel):
     id: uuid.UUID
+    display_name: str | None = None
     strain_name: str
     current_phase: str
     is_active: bool
