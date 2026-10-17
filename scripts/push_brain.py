@@ -24,6 +24,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -102,9 +103,12 @@ def main() -> None:
         return
 
     token = os.environ.get("LETSGROW_ADMIN_TOKEN") or getpass.getpass("ADMIN_TOKEN (não aparece ao digitar): ")
-    if not token.strip():
+    # Colar no prompt oculto pode trazer os marcadores de "bracketed paste"
+    # (ESC[200~ … ESC[201~) e outros caracteres de controle junto do token.
+    token = re.sub(r"\x1b\[20[01]~|[\x00-\x1f\x7f]", "", token).strip()
+    if not token:
         sys.exit("[ERRO] Token vazio.")
-    token = token.strip()
+    print(f"Token recebido: {len(token)} caracteres.")
 
     if not args.skip_knowledge:
         total_chunks = 0

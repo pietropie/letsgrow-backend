@@ -143,6 +143,10 @@ async def chat(
 
     # Retrieve relevant knowledge chunks
     chunks = await retrieve_chunks(db, user_message, grow, top_k=4)
+    logger.info(
+        "RAG: %d trechos para a conversa %s: %s",
+        len(chunks), conversation.id, ", ".join(c.source_file for c in chunks) or "nenhum",
+    )
     rag_context = "\n\n---\n\n".join(c.content for c in chunks)
 
     memories = (

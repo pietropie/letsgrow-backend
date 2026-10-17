@@ -62,9 +62,10 @@ async def retrieve_chunks(
     vector_str = "[" + ",".join(str(v) for v in query_vector) + "]"
 
     if phase_tags:
-        # Filter by phase relevance overlap — JSON array contains any of the phase tags
+        # Filter by phase relevance overlap — JSON array contains any of the phase tags.
+        # A coluna é `json` (não `jsonb`), que não tem o operador @> — daí o cast.
         phase_conditions = " OR ".join(
-            f"phase_relevance @> '[{chr(34)}{tag}{chr(34)}]'::jsonb" for tag in phase_tags
+            f"phase_relevance::jsonb @> '[{chr(34)}{tag}{chr(34)}]'::jsonb" for tag in phase_tags
         )
         query_sql = text(
             f"""

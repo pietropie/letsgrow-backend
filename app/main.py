@@ -12,6 +12,16 @@ from app.web.admin_panel import AI_PANEL_HTML
 
 logger = logging.getLogger(__name__)
 
+# O uvicorn só configura os próprios loggers; sem isto os logger.info de app.*
+# (startup, trechos do RAG por conversa etc.) não aparecem nos logs do Coolify.
+_app_logger = logging.getLogger("app")
+if not _app_logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
+    _app_logger.addHandler(_handler)
+    _app_logger.setLevel(logging.INFO)
+    _app_logger.propagate = False
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
