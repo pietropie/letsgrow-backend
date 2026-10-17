@@ -27,6 +27,7 @@ class PlanConfigResponse(BaseModel):
     max_pots_per_grow: int
     ai_queries_per_month: int | None
     sensors_allowed: bool
+    monthly_credits: int | None = None
     updated_by: str | None
 
 
@@ -42,6 +43,8 @@ class PlanConfigUpdate(BaseModel):
     # None = ilimitado; use 0 para explicitamente remover limite (sera salvo como null)
     ai_queries_per_month: int | None = Field(default=..., ge=1)
     sensors_allowed: bool | None = None
+    # null = plano nao concede creditos
+    monthly_credits: int | None = Field(default=None, ge=0)
     updated_by: str | None = None
 
     model_config = {"extra": "forbid"}

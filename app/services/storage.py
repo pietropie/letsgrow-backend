@@ -77,7 +77,7 @@ def get_minio_presign_client() -> Minio:
 def ensure_buckets() -> None:
     """Cria os buckets necessários se não existirem. Chamado no lifespan."""
     client = get_minio_client()
-    for bucket in (BUCKET_EVENTS, BUCKET_AVATARS):
+    for bucket in (BUCKET_EVENTS, BUCKET_AVATARS, get_settings().DATA_EXPORT_BUCKET):
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
     # strain-images precisa de leitura pública (URLs diretas, sem presign)
@@ -153,3 +153,57 @@ def delete_object(bucket: str, object_key: str) -> None:
         get_minio_client().remove_object(bucket, object_key)
     except S3Error:
         pass
+
+
+# ── Conta: copia dos dados e exclusao ──────────────────
+
+def put_bytes(bucket: str, object_key: str, data: bytes, content_type: str) -> None:
+    import io
+
+    get_minio_client().put_object(bucket, object_key, io.BytesIO(data), len(data), content_type=content_type)
+
+
+def get_bytes(bucket: str, object_key: str) -> bytes:
+    response = get_minio_client().get_object(bucket, object_key)
+    try:
+        return response.read()
+    finally:
+        response.close()
+        response.release_conn()
+
+
+def user_object_keys(user_id) -> list[tuple[str, str]]:
+    """Objetos privados do usuario: fotos do diario, avatar e copias de dados.
+
+    Segue o formato de chave emitido pelos endpoints de upload ("{user_id}/..."
+    e, no avatar, tambem "avatars/{user_id}/...").
+    """
+    client = get_minio_client()
+    prefixes = [
+        (BUCKET_EVENTS, f"{user_id}/"),
+        (BUCKET_AVATARS, f"{user_id}/"),
+        (BUCKET_AVATARS, f"avatars/{user_id}/"),
+        (get_settings().DATA_EXPORT_BUCKET, f"{user_id}/"),
+    ]
+    found: list[tuple[str, str]] = []
+    for bucket, prefix in prefixes:
+        if not client.bucket_exists(bucket):
+            continue
+        for obj in client.list_objects(bucket, prefix=prefix, recursive=True):
+            found.append((bucket, obj.object_name))
+    return found
+
+
+def remove_object_strict(bucket: str, object_key: str) -> None:
+    """Como delete_object, mas so ignora "nao existe"; outras falhas sobem."""
+    try:
+        get_minio_client().remove_object(bucket, object_key)
+    except S3Error as exc:
+        if exc.code not in ("NoSuchKey", "NoSuchBucket"):
+            raise
+
+
+def presign_download_short(bucket: str, object_key: str, seconds: int = 600) -> str:
+    from datetime import timedelta
+
+    return get_minio_presign_client().presigned_get_object(bucket, object_key, expires=timedelta(seconds=seconds))

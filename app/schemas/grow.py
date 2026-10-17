@@ -98,6 +98,8 @@ class EnvironmentMeasurement(BaseModel):
     unit: str
     source: Literal["manual", "sensor"] | None = None
     source_id: uuid.UUID | None = None
+    # Which record source_id points to, so the app can open it.
+    source_kind: Literal["sensor_reading", "event", "environment_reading"] | None = None
     observed_at: datetime | None = None
 
 

@@ -25,7 +25,7 @@ from app.models.event import GrowEvent
 from app.models.plant import Plant
 from app.services import ai_provider
 from app.services.bob_accountability import upsert_actionable_recommendations
-from app.services.bob_env import load_latest_sensor_env
+from app.services.bob_env import load_latest_env
 from app.services.bob_rules import BobStep, compute_bob_steps
 from app.services.redis_client import _get_redis
 
@@ -122,7 +122,7 @@ async def _load_plant_steps(db: AsyncSession, plant: Plant, today: date) -> list
         .limit(15)
     )
     events = ev_result.scalars().all()
-    latest_temp, latest_humidity = await load_latest_sensor_env(db, plant.id)
+    latest_temp, latest_humidity = await load_latest_env(db, plant.id)
     return await compute_bob_steps(
         plant,
         list(events),

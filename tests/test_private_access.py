@@ -20,6 +20,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.v1 import diary, plants, uploads
 from app.database import get_db
 from app.models.base import Base
+from app.models.environment_reading import EnvironmentReading
 from app.models.event import GrowEvent
 from app.models.grow import Grow
 from app.models.plant import Plant
@@ -59,6 +60,7 @@ class PrivateAccessTests(unittest.TestCase):
         self.engine = create_engine('sqlite://', poolclass=StaticPool, connect_args={'check_same_thread': False})
         Base.metadata.create_all(self.engine, tables=[
             User.__table__, Grow.__table__, Plant.__table__, GrowEvent.__table__, Strain.__table__,
+            EnvironmentReading.__table__,
         ])
         self.session = Session(self.engine, expire_on_commit=False)
         self.owner = uuid.uuid4()

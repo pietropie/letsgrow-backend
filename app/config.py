@@ -117,6 +117,14 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "noreply@letsgrow.app"
 
+    # Compra de creditos: provedor de pagamento ("unconfigured" = compra indisponivel).
+    # Precos, pacotes e custos ficam no painel admin, nao aqui.
+    PAYMENT_PROVIDER: str = "unconfigured"
+
+    # Copias de dados (LGPD): bucket privado no MinIO e validade do arquivo
+    DATA_EXPORT_BUCKET: str = "exports"
+    DATA_EXPORT_TTL_DAYS: int = 7
+
     # legado — mapeados internamente para cultivador/grower_pro em subscription.py
     GROWER_MAX_GROWS: int = 2
     GROWER_MAX_POTS_PER_GROW: int = 10

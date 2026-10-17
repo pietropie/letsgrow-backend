@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Float, and_, case, cast, func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.environment_reading import EnvironmentReading
 from app.models.event import GrowEvent
 from app.models.plant import Plant
 from app.models.sensor import SensorDevice, SensorReading
@@ -44,7 +45,8 @@ async def latest_grow_measurements(
     ):
         candidates.append(
             select(literal(metric).label("metric"), cast(column, Float).label("value"),
-                   literal("sensor").label("source"), SensorReading.id.label("source_id"),
+                   literal("sensor").label("source"), literal("sensor_reading").label("source_kind"),
+                   SensorReading.id.label("source_id"),
                    SensorReading.recorded_at.label("observed_at"))
             .select_from(SensorReading)
             .join(SensorDevice, SensorDevice.id == SensorReading.device_id)
@@ -56,12 +58,23 @@ async def latest_grow_measurements(
     for metric, column in (("temperature", GrowEvent.temperature_c), ("humidity", GrowEvent.humidity_rh)):
         candidates.append(
             select(literal(metric).label("metric"), cast(column, Float).label("value"),
-                   literal("manual").label("source"), GrowEvent.id.label("source_id"),
+                   literal("manual").label("source"), literal("event").label("source_kind"),
+                   GrowEvent.id.label("source_id"),
                    GrowEvent.event_date.label("observed_at"))
             .select_from(GrowEvent).join(Plant, Plant.id == GrowEvent.plant_id)
             .where(Plant.grow_id == grow_id, column.is_not(None), GrowEvent.event_date <= cutoff,
                    column > float('-inf'), column < float('inf'))
             .order_by(GrowEvent.event_date.desc(), GrowEvent.id.desc()).limit(1)
+        )
+    for metric, column in (("temperature", EnvironmentReading.temperature_c), ("humidity", EnvironmentReading.humidity_rh)):
+        candidates.append(
+            select(literal(metric).label("metric"), cast(column, Float).label("value"),
+                   literal("manual").label("source"), literal("environment_reading").label("source_kind"),
+                   EnvironmentReading.id.label("source_id"), EnvironmentReading.observed_at.label("observed_at"))
+            .where(EnvironmentReading.grow_id == grow_id, column.is_not(None),
+                   EnvironmentReading.observed_at <= cutoff,
+                   column > float('-inf'), column < float('inf'))
+            .order_by(EnvironmentReading.observed_at.desc(), EnvironmentReading.id.desc()).limit(1)
         )
     combined = union_all(*(select(candidate.subquery()) for candidate in candidates)).subquery()
     # Exclude non-finite readings without imposing agronomic ranges.
@@ -79,7 +92,8 @@ async def latest_grow_measurements(
             continue
         result[row["metric"]] = EnvironmentMeasurement(
             value=row["value"], unit=_UNITS[row["metric"]], source=row["source"],
-            source_id=row["source_id"], observed_at=_utc(row["observed_at"]),
+            source_id=row["source_id"], source_kind=row["source_kind"],
+            observed_at=_utc(row["observed_at"]),
         )
     return result
 

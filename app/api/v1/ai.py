@@ -7,8 +7,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.credits import start_paid_task
 from app.database import get_db
 from app.models.ai_config import AIConfig
+from app.models.credits import CreditQuote
 from app.models.event import GrowEvent
 from app.models.grow import Grow
 from app.models.knowledge import AIConversation
@@ -16,11 +18,11 @@ from app.models.plant import Plant
 from app.models.user import User
 from app.services.auth import get_current_user
 from app.services.bob_accountability import upsert_actionable_recommendations
-from app.services.bob_env import load_latest_sensor_env
+from app.services.bob_env import load_latest_env
 from app.services.bob_rules import compute_bob_steps
 from app.services.guard import guard_user_message
 from app.services.rag import chat
-from app.services.subscription import check_ai_limit
+from app.services.credits import capture, release
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -33,6 +35,8 @@ class ChatRequest(BaseModel):
     conversation_id: uuid.UUID | None = None
     # base64 data URIs, e.g. "data:image/jpeg;base64,..."  (max 4 imagens)
     images: list[str] | None = None
+    # Cotacao confirmada (POST /credits/quote) quando a mensagem tem custo em creditos
+    quote_id: uuid.UUID | None = None
 
 
 class ChatResponse(BaseModel):
@@ -62,8 +66,6 @@ async def chat_endpoint(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    check_ai_limit(current_user)
-
     # Carrega a mensagem de bloqueio personalizada do admin (se configurada)
     _config_result = await db.execute(select(AIConfig).order_by(AIConfig.created_at.asc()).limit(1))
     _ai_config = _config_result.scalar_one_or_none()
@@ -94,6 +96,11 @@ async def chat_endpoint(
         if not plant:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Planta nao encontrada")
 
+    # Limite mensal de consultas e, se a mensagem tiver custo, reserva dos creditos.
+    # Nada acima consome saldo; a reserva e gravada antes de chamar a IA.
+    reservation = await start_paid_task(db, current_user, "chat_message", body.quote_id)
+    reservation_id = reservation.id if reservation is not None else None
+
     conversation = None
     if body.conversation_id:
         result = await db.execute(
@@ -115,7 +122,16 @@ async def chat_endpoint(
         db.add(conversation)
         await db.flush()
 
-    reply = await chat(db, conversation, body.message, grow, plant, body.images or [])
+    try:
+        reply = await chat(db, conversation, body.message, grow, plant, body.images or [])
+    except Exception:
+        if reservation_id is not None:
+            # Falha tecnica sem entrega: descarta a conversa nao gravada e devolve a reserva.
+            await db.rollback()
+            quote = await db.get(CreditQuote, reservation_id)
+            if quote is not None:
+                await release(db, quote, "Falha técnica")
+        raise
 
     # ── Recomendacao acionavel (dedup por user+plant+action) ──────────────────
     rec_id: str | None = None
@@ -133,7 +149,7 @@ async def chat_endpoint(
                 .limit(15)
             )
             plant_events = events_result.scalars().all()
-            latest_temp, latest_humidity = await load_latest_sensor_env(db, plant.id)
+            latest_temp, latest_humidity = await load_latest_env(db, plant.id)
             steps = await compute_bob_steps(
                 plant,
                 plant_events,
@@ -163,6 +179,8 @@ async def chat_endpoint(
     ]
 
     current_user.ai_queries_this_month += 1
+    if reservation is not None:
+        await capture(db, reservation, task_ref=str(conversation.id))
     await db.commit()
 
     return ChatResponse(

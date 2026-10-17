@@ -23,6 +23,8 @@ from apscheduler.triggers.cron import CronTrigger
 logger = logging.getLogger(__name__)
 
 _JOB_ID = "daily_push"
+_PERSONAL_JOB_ID = "personal_push"
+_MAINTENANCE_JOB_ID = "account_maintenance"
 
 # Instância global — importada pelo main.py e pelo endpoint admin
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -30,83 +32,20 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 
 async def _run_daily_push() -> None:
     """
-    Callback chamado pelo scheduler no horário configurado.
+    Callback chamado pelo scheduler no horário configurado pelo admin.
+    Atende quem nunca salvou preferências de acompanhamento (comportamento
+    anterior); quem salvou é atendido por _run_personal_push no horário local.
     Cria sua própria sessão de banco para não depender do ciclo de request.
     """
     logger.info("Scheduler: iniciando envio de push diário")
     try:
         from app.database import AsyncSessionLocal
         from app.api.v1.admin import _get_or_create_config
-        from app.services.daily_brief import invalidate_brief
-        from app.services.push import send_push
-        from app.models.plant import Plant
-        from app.models.user import User
-        from sqlalchemy import select
+        from app.services.notification_delivery import deliver_daily_briefs
 
         async with AsyncSessionLocal() as db:
-            users_result = await db.execute(
-                select(User).where(
-                    User.is_active == True,  # noqa: E712
-                    User.expo_push_token.isnot(None),
-                )
-            )
-            users = users_result.scalars().all()
-
-            pushed = skipped_no_token = skipped_no_plants = errors = 0
             now = datetime.now(timezone.utc)
-
-            for user in users:
-                if not user.expo_push_token:
-                    skipped_no_token += 1
-                    continue
-                if user.daily_brief_sent_at:
-                    last = user.daily_brief_sent_at
-                    if last.tzinfo is None:
-                        last = last.replace(tzinfo=timezone.utc)
-                    if (now - last).total_seconds() < 82_800:
-                        continue
-
-                plant_count = (
-                    await db.execute(
-                        select(Plant.id).where(
-                            Plant.user_id == user.id,
-                            Plant.is_active == True,  # noqa: E712
-                        ).limit(1)
-                    )
-                ).scalar_one_or_none()
-
-                if not plant_count:
-                    skipped_no_plants += 1
-                    continue
-
-                try:
-                    from app.services.daily_brief import generate_daily_brief
-                    await invalidate_brief(user.id)
-                    brief = await generate_daily_brief(db, user.id, force_refresh=True)
-                    ok = await send_push(
-                        token=user.expo_push_token,
-                        title=brief.title,
-                        body=brief.body,
-                        data={"type": "daily_brief", "urgent_count": brief.urgent_count},
-                    )
-                    if ok:
-                        pushed += 1
-                        user.daily_brief_sent_at = now
-                    else:
-                        errors += 1
-                except Exception as exc:
-                    logger.error("Push para user %s falhou: %s", user.id, exc)
-                    errors += 1
-
-            await db.commit()
-
-            stats = {
-                "users_processed": len(users),
-                "pushed": pushed,
-                "skipped_no_token": skipped_no_token,
-                "skipped_no_plants": skipped_no_plants,
-                "errors": errors,
-            }
+            stats = await deliver_daily_briefs(db, scope="default", now=now)
             logger.info("Push diário concluído: %s", stats)
 
             # Persiste resultado e timestamp na ai_config
@@ -120,6 +59,33 @@ async def _run_daily_push() -> None:
 
     except Exception as exc:
         logger.error("Erro crítico no scheduler de push: %s", exc, exc_info=True)
+
+
+async def _run_personal_push() -> None:
+    """A cada 15 min: resumo diário de quem escolheu horário próprio."""
+    try:
+        from app.database import AsyncSessionLocal
+        from app.api.v1.admin import _get_or_create_config
+        from app.services.notification_delivery import deliver_daily_briefs
+
+        async with AsyncSessionLocal() as db:
+            config = await _get_or_create_config(db)
+            if not config.daily_push_enabled:
+                return
+            stats = await deliver_daily_briefs(db, scope="personal")
+            if stats["users_processed"]:
+                logger.info("Push diário (horário do usuário): %s", stats)
+    except Exception as exc:
+        logger.error("Erro no push por horário do usuário: %s", exc, exc_info=True)
+
+
+async def _run_account_maintenance() -> None:
+    """Cópias de dados pendentes, exclusões vencidas e reenvio de e-mails de suporte."""
+    try:
+        from app.services.account_maintenance import run_account_maintenance
+        await run_account_maintenance()
+    except Exception as exc:
+        logger.error("Erro na manutenção de contas: %s", exc, exc_info=True)
 
 
 def _schedule_job(hour: int, minute: int) -> None:
@@ -148,6 +114,26 @@ def reschedule(hour: int, minute: int, enabled: bool) -> None:
             logger.info("Push diário desabilitado — job removido")
         return
     _schedule_job(hour, minute)
+
+
+def setup_background_jobs() -> None:
+    """Jobs fixos: push no horário de cada usuário e manutenção de contas."""
+    scheduler.add_job(
+        _run_personal_push,
+        trigger=CronTrigger(minute="*/15", timezone="UTC"),
+        id=_PERSONAL_JOB_ID,
+        name="Push diário no horário do usuário",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
+    scheduler.add_job(
+        _run_account_maintenance,
+        trigger=CronTrigger(minute="*/10", timezone="UTC"),
+        id=_MAINTENANCE_JOB_ID,
+        name="Manutenção de contas (cópias, exclusões, suporte)",
+        replace_existing=True,
+        misfire_grace_time=600,
+    )
 
 
 async def setup_daily_push() -> None:

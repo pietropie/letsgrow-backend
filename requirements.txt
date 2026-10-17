@@ -26,3 +26,5 @@ redis>=5.0.0
 google-auth>=2.29.0
 resend>=2.0.0
 apscheduler>=3.10.0
+# Fusos IANA para as preferencias de notificacao (imagem slim nao traz tzdata)
+tzdata>=2024.1

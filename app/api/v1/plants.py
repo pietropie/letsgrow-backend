@@ -28,7 +28,7 @@ from app.schemas.plant import (
 )
 from app.schemas.common import MessageResponse
 from app.services.auth import get_current_user
-from app.services.subscription import check_ai_limit, check_plant_limit
+from app.services.subscription import check_plant_limit
 
 logger = logging.getLogger(__name__)
 
@@ -486,14 +486,12 @@ async def delete_event(
 async def analyze_event(
     plant_id: uuid.UUID,
     event_id: uuid.UUID,
+    quote_id: Optional[uuid.UUID] = Query(default=None, description="Cotação confirmada, se a análise tiver custo"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Analisa as fotos de um evento do diário com IA multimodal (requer um
     provedor com suporte a visão configurado em /admin/ai-panel — ex.: Gemini)."""
-    # Verifica limite de IA do plano antes de consumir tokens
-    check_ai_limit(current_user)
-
     plant = await _get_plant_or_404(plant_id, current_user.id, db)
     result = await db.execute(
         select(GrowEvent).where(GrowEvent.id == event_id, GrowEvent.plant_id == plant_id)
@@ -509,13 +507,30 @@ async def analyze_event(
         )
 
     require_owned_event_photos(event.photo_keys, current_user.id)
+    from app.api.v1.credits import start_paid_task
+    from app.models.credits import CreditQuote
+    from app.services.credits import capture, release
     from app.services.rag import analyze_event_photos
+
+    # Limite mensal de consultas e, se a analise tiver custo, reserva dos creditos.
+    reservation = await start_paid_task(db, current_user, "photo_analysis", quote_id)
+    reservation_id = reservation.id if reservation is not None else None
+
+    async def _release_reservation() -> None:
+        if reservation_id is None:
+            return
+        await db.rollback()
+        quote = await db.get(CreditQuote, reservation_id)
+        if quote is not None:
+            await release(db, quote, "Falha técnica")
 
     try:
         analysis = await analyze_event_photos(db, plant=plant, event=event)
     except RuntimeError as exc:
+        await _release_reservation()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
     except Exception as exc:
+        await _release_reservation()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Falha ao analisar fotos com IA: {exc}",
@@ -523,6 +538,8 @@ async def analyze_event(
 
     # Incrementa contador de uso de IA (planos com limite: free, jardineiro)
     current_user.ai_queries_this_month += 1
+    if reservation is not None:
+        await capture(db, reservation, task_ref=str(event.id))
     await db.commit()
 
     return EventAnalysisResponse(

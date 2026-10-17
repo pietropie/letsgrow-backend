@@ -148,6 +148,7 @@ def _row_to_dict(row: PlanConfig) -> dict:
         "max_pots_per_grow": row.max_pots_per_grow,
         "ai_queries_per_month": row.ai_queries_per_month,
         "sensors_allowed": row.sensors_allowed,
+        "monthly_credits": row.monthly_credits,
         "updated_by": row.updated_by,
     }
 

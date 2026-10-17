@@ -12,7 +12,7 @@ Nao faz queries ao banco, nao chama LLM.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -54,6 +54,9 @@ class BobStep:
     message: str  # texto direto para exibir / injetar no contexto do Bob
     plant_id: uuid.UUID
     reason: str   # string tecnica para log/debug (ex: "days_since=8 > avg_interval+2=6")
+    # Registros que sustentam o passo (ver attach_evidence). Lista vazia = a regra
+    # nao consegue citar a base; o app mostra isso em vez de inventar registros.
+    evidence: list[dict] = field(default_factory=list)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -121,6 +124,94 @@ def resolve_env_snapshot(
     return temp, hum
 
 
+# ── Evidencias ───────────────────────────────────────────────────────────────
+
+_MAX_EVENT_EVIDENCE = 5
+_PLANT_DATE_ACTIONS = frozenset({"topping", "lst", "flip", "desfolha", "mkp", "tricomas", "flush", "harvest"})
+
+
+def _iso(value: date | datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def event_evidence(ev: GrowEvent) -> dict:
+    """Evidencia de um registro do diario, com os valores que ele contem."""
+    values: dict = {"event_type": ev.event_type}
+    for attr in ("temperature_c", "humidity_rh", "ppm", "ph_in", "ec_out", "water_volume_ml"):
+        value = getattr(ev, attr, None)
+        if value is not None:
+            values[attr] = value
+    if getattr(ev, "notes", None):
+        values["notes"] = ev.notes[:200]
+    return {
+        "kind": "event",
+        "id": str(ev.id),
+        "observed_at": _iso(ev.event_date),
+        "source": "manual",
+        "plant_id": str(ev.plant_id),
+        "grow_id": None,
+        "values": values,
+    }
+
+
+def _plant_evidence(plant: Plant) -> dict:
+    """Datas cadastradas na planta que as regras de fase usam."""
+    values = {
+        "current_phase": plant.current_phase,
+        "germination_date": _iso(plant.germination_date),
+        "flip_date": _iso(plant.flip_date),
+        "expected_harvest_days": plant.expected_harvest_days,
+    }
+    return {
+        "kind": "plant",
+        "id": str(plant.id),
+        "observed_at": None,
+        "source": "manual",
+        "plant_id": str(plant.id),
+        "grow_id": str(plant.grow_id) if getattr(plant, "grow_id", None) else None,
+        "values": {k: v for k, v in values.items() if v is not None},
+    }
+
+
+def _env_event_evidence(events: list[GrowEvent], attr: str, value: float) -> list[dict]:
+    for ev in events:
+        if getattr(ev, attr, None) == value:
+            return [event_evidence(ev)]
+    return []
+
+
+def attach_evidence(
+    steps: list[BobStep],
+    plant: Plant,
+    events: list[GrowEvent],
+    *,
+    latest_temp: float | None,
+    latest_humidity: float | None,
+    env_evidence: dict[str, dict] | None,
+) -> None:
+    """Preenche step.evidence com os registros realmente usados por cada regra."""
+    env_evidence = env_evidence or {}
+    watering = [ev for ev in events if ev.event_type in _WATERING_TYPES][:_MAX_EVENT_EVIDENCE]
+    for step in steps:
+        if step.action == "temperature":
+            temp, _ = resolve_env_snapshot(events, latest_temp, latest_humidity)
+            if latest_temp is not None:
+                step.evidence = [env_evidence["temperature"]] if "temperature" in env_evidence else []
+            elif temp is not None:
+                step.evidence = _env_event_evidence(events, "temperature_c", temp)
+        elif step.action == "humidity":
+            _, hum = resolve_env_snapshot(events, latest_temp, latest_humidity)
+            if latest_humidity is not None:
+                step.evidence = [env_evidence["humidity"]] if "humidity" in env_evidence else []
+            elif hum is not None:
+                step.evidence = _env_event_evidence(events, "humidity_rh", hum)
+            step.evidence = step.evidence + [_plant_evidence(plant)]
+        elif step.action == "watering":
+            step.evidence = [event_evidence(ev) for ev in watering]
+        elif step.action in _PLANT_DATE_ACTIONS:
+            step.evidence = [_plant_evidence(plant)]
+
+
 # ── Motor principal ───────────────────────────────────────────────────────────
 
 async def compute_bob_steps(
@@ -130,6 +221,7 @@ async def compute_bob_steps(
     *,
     latest_temp: float | None = None,
     latest_humidity: float | None = None,
+    env_evidence: dict[str, dict] | None = None,
 ) -> list[BobStep]:
     """Motor unificado de regras do Bob 2.0.
 
@@ -139,6 +231,7 @@ async def compute_bob_steps(
     events : ate 15 ultimos GrowEvent da planta, ordenados por data DESC
     today  : data de referencia (normalmente date.today())
     latest_temp / latest_humidity : leitura ao vivo de sensor, se houver
+    env_evidence : evidencia (por "temperature"/"humidity") de latest_temp/latest_humidity
 
     Retorno
     -------
@@ -433,6 +526,10 @@ async def compute_bob_steps(
                 ),
             ))
 
+    attach_evidence(
+        steps, plant, events,
+        latest_temp=latest_temp, latest_humidity=latest_humidity, env_evidence=env_evidence,
+    )
     return steps
 
 

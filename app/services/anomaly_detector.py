@@ -142,7 +142,8 @@ async def check_and_save_anomaly(
             if not await _anomaly_already_active(db, plant_id, anomaly_type):
                 return await _create_anomaly(
                     db, user_id, plant_id, anomaly_type,
-                    {"days_since": days_since, "substrate": plant.substrate},
+                    {"days_since": days_since, "substrate": plant.substrate,
+                     "event_id": str(watering_evs[0].id)},
                 )
 
         # ── 2. Rega impossível (coco) ─────────────────────────────────────────
@@ -151,7 +152,8 @@ async def check_and_save_anomaly(
             if not await _anomaly_already_active(db, plant_id, anomaly_type):
                 return await _create_anomaly(
                     db, user_id, plant_id, anomaly_type,
-                    {"days_since": days_since, "substrate": plant.substrate},
+                    {"days_since": days_since, "substrate": plant.substrate,
+                     "event_id": str(watering_evs[0].id)},
                 )
 
     # ── 3. EC fora do range ───────────────────────────────────────────────────
@@ -171,7 +173,7 @@ async def check_and_save_anomaly(
             if not await _anomaly_already_active(db, plant_id, anomaly_type):
                 return await _create_anomaly(
                     db, user_id, plant_id, anomaly_type,
-                    {"ph_value": latest.ph_in},
+                    {"ph_value": latest.ph_in, "event_id": str(latest.id)},
                 )
 
         # ── 5. Fase inconsistente ─────────────────────────────────────────────
@@ -186,7 +188,8 @@ async def check_and_save_anomaly(
             if not await _anomaly_already_active(db, plant_id, anomaly_type):
                 return await _create_anomaly(
                     db, user_id, plant_id, anomaly_type,
-                    {"event_type": event_type, "plant_phase": plant.current_phase},
+                    {"event_type": event_type, "plant_phase": plant.current_phase,
+                     "event_id": str(latest.id)},
                 )
 
     return None

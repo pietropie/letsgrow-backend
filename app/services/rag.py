@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.ai_config import AIConfig
+from app.models.bob import BobMemory
 from app.models.grow import Grow
 from app.models.knowledge import AIConversation, KnowledgeChunk
 from app.models.plant import Plant
@@ -144,7 +145,17 @@ async def chat(
     chunks = await retrieve_chunks(db, user_message, grow, top_k=4)
     rag_context = "\n\n---\n\n".join(c.content for c in chunks)
 
-    system_prompt = build_system_prompt(grow_ctx, rag_context, plant_ctx, customer_ctx)
+    memories = (
+        await db.execute(
+            select(BobMemory.content)
+            .where(BobMemory.user_id == conversation.user_id)
+            .order_by(BobMemory.created_at.asc())
+        )
+    ).scalars().all()
+
+    system_prompt = build_system_prompt(
+        grow_ctx, rag_context, plant_ctx, customer_ctx, user_preferences=list(memories),
+    )
 
     # Build message history (last 6 messages to save tokens)
     history = conversation.messages[-6:] if conversation.messages else []
@@ -241,10 +252,10 @@ async def generate_plant_tip(db, *, plant: Plant, events: list) -> dict | None:
     import time as _time
     from datetime import date as _date
 
-    from app.services.bob_env import load_latest_sensor_env
+    from app.services.bob_env import load_latest_env
     from app.services.bob_rules import compute_bob_steps
 
-    latest_temp, latest_humidity = await load_latest_sensor_env(db, plant.id)
+    latest_temp, latest_humidity = await load_latest_env(db, plant.id)
     steps = await compute_bob_steps(
         plant,
         list(events),

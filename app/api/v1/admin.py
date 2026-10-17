@@ -9,6 +9,7 @@ trocar isso rápido em uma emergência") sem esse trabalho extra. Ver
 app/config.py:ADMIN_TOKEN para como gerar e configurar.
 """
 import logging
+import secrets
 import uuid
 from datetime import datetime, timezone
 
@@ -36,7 +37,9 @@ async def require_admin_token(x_admin_token: str | None = Header(default=None)) 
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Painel admin desativado — configure ADMIN_TOKEN no ambiente do servidor.",
         )
-    if not x_admin_token or x_admin_token != settings.ADMIN_TOKEN:
+    if not x_admin_token or not secrets.compare_digest(
+        x_admin_token.encode("utf-8"), settings.ADMIN_TOKEN.encode("utf-8")
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token de admin inválido")
 
 
@@ -248,6 +251,8 @@ class DailyPushResult(BaseModel):
     skipped_no_token: int
     skipped_no_plants: int
     errors: int
+    skipped_in_app: int = 0
+    skipped_quiet: int = 0
 
 
 @router.post("/push/daily", response_model=DailyPushResult)
@@ -265,85 +270,15 @@ async def send_daily_push(
 
     Anti-spam: um usuário não recebe mais de 1 push/dia (controlado por
     daily_brief_sent_at no modelo User).
+
+    Respeita as preferências de acompanhamento de cada usuário (somente no app,
+    horário silencioso e prévia discreta).
     """
-    from app.services.daily_brief import generate_daily_brief, invalidate_brief
-    from app.services.push import send_push
+    from app.services.notification_delivery import deliver_daily_briefs
 
-    # Busca usuários com token e plantas ativas
-    users_result = await db.execute(
-        select(User).where(
-            User.is_active == True,  # noqa: E712
-            User.expo_push_token.isnot(None),
-        )
-    )
-    users = users_result.scalars().all()
-
-    pushed = 0
-    skipped_no_token = 0
-    skipped_no_plants = 0
-    errors = 0
-    now = datetime.now(timezone.utc)
-
-    for user in users:
-        if not user.expo_push_token:
-            skipped_no_token += 1
-            continue
-
-        # Anti-spam: pula se já foi enviado hoje
-        if user.daily_brief_sent_at:
-            last = user.daily_brief_sent_at
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
-            if (now - last).total_seconds() < 82_800:  # menos de 23h
-                continue
-
-        # Verifica se tem plantas ativas
-        plant_count = (
-            await db.execute(
-                select(Plant.id).where(
-                    Plant.user_id == user.id,
-                    Plant.is_active == True,  # noqa: E712
-                ).limit(1)
-            )
-        ).scalar_one_or_none()
-
-        if not plant_count:
-            skipped_no_plants += 1
-            continue
-
-        try:
-            # Força refresh do brief (sem cache) para ter dados frescos
-            await invalidate_brief(user.id)
-            brief = await generate_daily_brief(db, user.id, force_refresh=True)
-
-            # Só envia se há algo relevante (não é só "tudo em dia")
-            ok = await send_push(
-                token=user.expo_push_token,
-                title=brief.title,
-                body=brief.body,
-                data={"type": "daily_brief", "urgent_count": brief.urgent_count},
-            )
-            if ok:
-                pushed += 1
-                user.daily_brief_sent_at = now
-            else:
-                errors += 1
-        except Exception as exc:
-            logger.error("Erro ao processar push para user %s: %s", user.id, exc)
-            errors += 1
-
-    await db.commit()
-    logger.info(
-        "Daily push concluído: %d pushed, %d sem token, %d sem plantas, %d erros",
-        pushed, skipped_no_token, skipped_no_plants, errors,
-    )
-    return DailyPushResult(
-        users_processed=len(users),
-        pushed=pushed,
-        skipped_no_token=skipped_no_token,
-        skipped_no_plants=skipped_no_plants,
-        errors=errors,
-    )
+    stats = await deliver_daily_briefs(db, scope="all")
+    logger.info("Daily push manual concluído: %s", stats)
+    return DailyPushResult(**stats)
 
 
 # ─── Push notifications: envio personalizado ─────────────────────────────────
@@ -368,6 +303,8 @@ class CustomPushResult(BaseModel):
     sent: int
     failed: int
     skipped_no_token: int
+    # Usuarios em "somente no app" ou no horario silencioso
+    skipped_by_preference: int = 0
 
 
 class SegmentPreviewIn(BaseModel):
@@ -415,7 +352,10 @@ async def send_custom_push(
     - target="user"    → somente o usuário com o e-mail informado
     - target="segment" → aplica filtros de segmento (segment_*)
     """
-    from app.services.push import send_push, send_push_batch
+    from app.services.notification_delivery import (
+        DISCREET_BODY, DISCREET_TITLE, tokens_for_external_push,
+    )
+    from app.services.push import send_push_batch
     from app.services.segment_evaluator import SegmentFilters, evaluate_segment
 
     data: dict = {"type": "custom"}
@@ -434,11 +374,10 @@ async def send_custom_push(
             raise HTTPException(status_code=404, detail="Usuário não encontrado ou inativo.")
         if not user.expo_push_token:
             return CustomPushResult(sent=0, failed=0, skipped_no_token=1)
-        ok = await send_push(token=user.expo_push_token, title=body.title, body=body.body, data=data)
-        return CustomPushResult(sent=1 if ok else 0, failed=0 if ok else 1, skipped_no_token=0)
+        users = [user]
 
     # ── Segmento ─────────────────────────────────────────────────────────────
-    if body.target == "segment":
+    elif body.target == "segment":
         filters = SegmentFilters(
             plans=body.segment_plans,
             plant_phases=body.segment_plant_phases,
@@ -449,19 +388,23 @@ async def send_custom_push(
             inactive_for_days=body.segment_inactive_for_days,
         )
         users = await evaluate_segment(db, filters)
-        tokens = [u.expo_push_token for u in users if u.expo_push_token]
-        if not tokens:
-            return CustomPushResult(sent=0, failed=0, skipped_no_token=0)
-        stats = await send_push_batch(tokens, title=body.title, body=body.body, data=data)
-        logger.info("Custom push (segment): sent=%d failed=%d", stats["sent"], stats["failed"])
-        return CustomPushResult(sent=stats["sent"], failed=stats["failed"], skipped_no_token=0)
 
     # ── Broadcast (all) ──────────────────────────────────────────────────────
-    users_result = await db.execute(
-        select(User).where(User.is_active == True, User.expo_push_token.isnot(None))  # noqa: E712
-    )
-    users = users_result.scalars().all()
-    tokens = [u.expo_push_token for u in users if u.expo_push_token]
-    stats = await send_push_batch(tokens, title=body.title, body=body.body, data=data)
-    logger.info("Custom push (broadcast): sent=%d failed=%d", stats["sent"], stats["failed"])
-    return CustomPushResult(sent=stats["sent"], failed=stats["failed"], skipped_no_token=0)
+    elif body.target == "all":
+        users_result = await db.execute(
+            select(User).where(User.is_active == True, User.expo_push_token.isnot(None))  # noqa: E712
+        )
+        users = users_result.scalars().all()
+
+    # Preferencias do usuario: "somente no app"/silencio bloqueiam; previa discreta
+    # recebe texto generico, sem o conteudo da mensagem.
+    full, discreet, blocked = await tokens_for_external_push(db, list(users))
+    sent = failed = 0
+    for tokens, title, text in ((full, body.title, body.body), (discreet, DISCREET_TITLE, DISCREET_BODY)):
+        if not tokens:
+            continue
+        stats = await send_push_batch(tokens, title=title, body=text, data=data)
+        sent += stats["sent"]
+        failed += stats["failed"]
+    logger.info("Custom push (%s): sent=%d failed=%d blocked=%d", body.target, sent, failed, blocked)
+    return CustomPushResult(sent=sent, failed=failed, skipped_no_token=0, skipped_by_preference=blocked)

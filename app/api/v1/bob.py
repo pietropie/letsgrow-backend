@@ -31,8 +31,8 @@ from app.services.alert_state import (
 from app.services.anomaly_detector import format_anomaly_message
 from app.services.auth import get_current_user
 from app.services.bob_accountability import reschedule_recommendation
-from app.services.bob_env import load_latest_sensor_env
-from app.services.bob_rules import compute_bob_steps
+from app.services.bob_env import load_latest_env_with_evidence
+from app.services.bob_rules import compute_bob_steps, event_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -90,13 +90,16 @@ async def get_bob_alerts(
         )
         events = events_result.scalars().all()
 
-        latest_temp, latest_humidity = await load_latest_sensor_env(db, plant.id)
+        latest_temp, latest_humidity, env_evidence = await load_latest_env_with_evidence(
+            db, plant.id, plant.grow_id
+        )
         steps = await compute_bob_steps(
             plant,
             events,
             today,
             latest_temp=latest_temp,
             latest_humidity=latest_humidity,
+            env_evidence=env_evidence,
         )
 
         # 4. Filtrar apenas critical e anomaly; gerar alert_id deterministico
@@ -114,6 +117,7 @@ async def get_bob_alerts(
                     action=step.action,
                     message=step.message,
                     reason=step.reason,
+                    evidence=step.evidence,
                 )
             )
 
@@ -146,6 +150,23 @@ async def get_bob_alerts(
         for row in extra_result.all():
             plant_name_map[row[0]] = row[2] or row[1] or "Planta sem nome"
 
+    # Evento citado pela anomalia (details.event_id), somente se for do usuario.
+    cited_event_ids: set[uuid.UUID] = set()
+    for anomaly in anomalies:
+        raw = (anomaly.details or {}).get("event_id")
+        try:
+            cited_event_ids.add(uuid.UUID(str(raw)))
+        except (TypeError, ValueError):
+            continue
+    cited_events: dict[str, dict] = {}
+    if cited_event_ids:
+        cited_result = await db.execute(
+            select(GrowEvent)
+            .join(Plant, Plant.id == GrowEvent.plant_id)
+            .where(GrowEvent.id.in_(cited_event_ids), Plant.user_id == user_id)
+        )
+        cited_events = {str(ev.id): event_evidence(ev) for ev in cited_result.scalars().all()}
+
     anomaly_alerts: list[BobAlertResponse] = [
         BobAlertResponse(
             alert_id=f"anomaly:{anomaly.id}",
@@ -159,6 +180,9 @@ async def get_bob_alerts(
             action=anomaly.anomaly_type,
             message=format_anomaly_message(anomaly.anomaly_type, anomaly.details),
             reason=f"BobAnomaly id={anomaly.id} type={anomaly.anomaly_type}",
+            evidence=[
+                cited_events[str((anomaly.details or {}).get("event_id"))]
+            ] if str((anomaly.details or {}).get("event_id")) in cited_events else [],
         )
         for anomaly in anomalies
     ]

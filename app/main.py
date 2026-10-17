@@ -31,9 +31,10 @@ async def lifespan(app: FastAPI):
     # Scheduler de push diário (APScheduler)
     _scheduler = None
     try:
-        from app.services.scheduler import scheduler, setup_daily_push
+        from app.services.scheduler import scheduler, setup_background_jobs, setup_daily_push
         scheduler.start()
         await setup_daily_push()
+        setup_background_jobs()
         _scheduler = scheduler
         logger.info("APScheduler iniciado")
     except ImportError:

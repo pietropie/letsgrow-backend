@@ -39,6 +39,8 @@ class PlanConfig(Base, TimestampMixin):
     # null = ilimitado
     ai_queries_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sensors_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Creditos concedidos por mes; null = plano nao concede creditos
+    monthly_credits: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Quem fez a ultima alteracao
     updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
