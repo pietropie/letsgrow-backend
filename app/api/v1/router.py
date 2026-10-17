@@ -7,6 +7,7 @@ from app.api.v1 import (
     admin_business,
     admin_dev_mode,
     admin_iot,
+    admin_knowledge,
     admin_plans,
     admin_stats,
     admin_strains,
@@ -38,6 +39,7 @@ api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_ai.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_users.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_plans.router, prefix="/admin", tags=["admin"])
+api_router.include_router(admin_knowledge.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_strains.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_stats.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_iot.router, prefix="/admin", tags=["admin"])
