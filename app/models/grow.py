@@ -48,6 +48,10 @@ class Grow(Base, TimestampMixin):
     exhaust_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     exhaust_cfm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     exhaust_location: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Potencia ajustada pela pessoa no controlador fisico (0-100, passos de 5). E so um
+    # registro: o app nao comanda o exaustor (nao ha MQTT de saida).
+    exhaust_power_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exhaust_power_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # copa | base
     carbon_filter: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # active_fan | passive | none

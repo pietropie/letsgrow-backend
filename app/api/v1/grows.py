@@ -1,11 +1,12 @@
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.environment_reading import EnvironmentReading
 from app.models.grow import Grow
 from app.models.plant import Plant
 from app.models.user import User
@@ -124,9 +125,25 @@ async def update_grow(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Atualiza o ambiente.
+
+    `exhaust_power_pct` e so o registro da potencia ajustada no controlador do exaustor:
+    nada e enviado ao equipamento. Quando o valor muda, o servidor grava
+    `exhaust_power_updated_at` e um registro no historico do ambiente.
+    """
     grow = await _get_grow_or_404(grow_id, current_user.id, db)
+    previous_power = grow.exhaust_power_pct
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(grow, field, value)
+    if body.exhaust_power_pct is not None and body.exhaust_power_pct != previous_power:
+        now = datetime.now(timezone.utc)
+        grow.exhaust_power_updated_at = now
+        verb = "registrada como" if previous_power is None else "ajustada para"
+        db.add(EnvironmentReading(
+            grow_id=grow.id, user_id=current_user.id, observed_at=now,
+            notes=f"Potência do exaustor {verb} {body.exhaust_power_pct}%",
+            created_at=now, updated_at=now,
+        ))
     await db.commit()
     await db.refresh(grow)
     return _grow_response(grow, await latest_grow_env(db, grow.id))

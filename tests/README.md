@@ -21,3 +21,5 @@ No ambiente Codex/Windows, a criação do socket interno do event loop Python fi
 O ambiente `.venv-test` precisou de `aiosqlite`, `alembic`, `apscheduler`, `resend`, `redis`, `tzdata`, `google-auth` e `python-multipart` (instalados com `py -3.12 -m pip install --target .venv-test/Lib/site-packages --no-deps ...`).
 
 `test_plant_phase.py` (QA 2026-10-18) cobre a fase pelos registros FASE (germinação, muda, vega, flip a partir de qualquer fase anterior, colheita), a regra de não voltar a fase com registro antigo, a correção manual pelo PATCH, o registro múltiplo (`POST /diary`) e a data da próxima renovação da cota do Bobby. `test_sem_api.py` passou a checar `GET /account/deletion-policy`. Total atual: 69 testes.
+
+`test_grow_exhaust_power.py` cobre a potência do exaustor registrada no ambiente: 0–100 em passos de 5, só o dono, registro no histórico só quando o valor muda ("registrada como" na primeira vez, "ajustada para" depois), `exhaust_power_updated_at` gravado pelo servidor e devolvido pelo `GET /grows/{id}`, e o registro no contexto do Bobby. Total atual: 74 testes.

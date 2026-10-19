@@ -72,6 +72,14 @@ class GrowUpdate(BaseModel):
     exhaust_type: str | None = None
     exhaust_cfm: int | None = None
     exhaust_location: str | None = None
+    exhaust_power_pct: int | None = Field(
+        default=None, ge=0, le=100, multiple_of=5,
+        description=(
+            "Potencia do exaustor ajustada no controlador fisico (0-100, passos de 5). "
+            "Somente registro: nao comanda o equipamento (nao ha MQTT de saida). "
+            "Quando muda, o servidor grava exhaust_power_updated_at e um registro no historico do ambiente."
+        ),
+    )
     carbon_filter: bool | None = None
     intake_type: str | None = None
     internal_circulation_fans: int | None = None
@@ -153,6 +161,9 @@ class GrowResponse(BaseModel):
     exhaust_type: str | None
     exhaust_cfm: int | None
     exhaust_location: str | None
+    # Registro da potencia ajustada no controlador (nao e comando); horario gravado pelo servidor
+    exhaust_power_pct: int | None = None
+    exhaust_power_updated_at: datetime | None = None
     carbon_filter: bool | None
     intake_type: str | None
     internal_circulation_fans: int | None

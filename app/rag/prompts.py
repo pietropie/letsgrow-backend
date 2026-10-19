@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.environment_reading import EnvironmentReading
 from app.models.event import GrowEvent
 from app.models.grow import Grow
 from app.models.plant import Plant
@@ -438,6 +439,37 @@ async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
     return "\n".join(lines)
 
 
+async def _environment_record_lines(db: AsyncSession, grow: Grow, limit: int = 5) -> list[str]:
+    """Potencia do exaustor registrada e ultimos registros manuais do ambiente (sem planta)."""
+    lines: list[str] = []
+    if grow.exhaust_power_pct is not None:
+        when = f" em {grow.exhaust_power_updated_at:%d/%m/%Y}" if grow.exhaust_power_updated_at else ""
+        lines.append(
+            f"Exaustor: potencia registrada {grow.exhaust_power_pct}%{when} "
+            "(ajuste informado pelo usuario; o app nao controla o exaustor)"
+        )
+    records = (
+        await db.execute(
+            select(EnvironmentReading)
+            .where(EnvironmentReading.grow_id == grow.id)
+            .order_by(EnvironmentReading.observed_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    if records:
+        lines.append("Registros do ambiente:")
+        for r in records:
+            parts = []
+            if r.temperature_c is not None:
+                parts.append(f"{r.temperature_c:g} C")
+            if r.humidity_rh is not None:
+                parts.append(f"{r.humidity_rh:g}% UR")
+            if r.notes:
+                parts.append(r.notes)
+            lines.append(f"  - {r.observed_at:%d/%m %H:%M}: {' | '.join(parts)}")
+    return lines
+
+
 async def build_grow_context(db: AsyncSession, grow: Grow) -> str:
     if not grow:
         return ""
@@ -453,6 +485,7 @@ async def build_grow_context(db: AsyncSession, grow: Grow) -> str:
         lines.append(f"Tent: {grow.tent_width_cm}x{grow.tent_depth_cm}x{grow.tent_height_cm} cm")
     if grow.lighting_watts:
         lines.append(f"Iluminacao: {grow.lighting_watts}W")
+    lines.extend(await _environment_record_lines(db, grow))
 
     result = await db.execute(
         select(Plant)
@@ -543,6 +576,7 @@ async def build_plant_context(db: AsyncSession, plant: Plant, grow: Grow | None 
                 equipment.append("umidificador")
             env_parts.append(f"Equipamentos: {', '.join(equipment)}")
         lines.append(" | ".join(env_parts))
+        lines.extend(await _environment_record_lines(db, grow))
 
     ev_result = await db.execute(
         select(GrowEvent)
