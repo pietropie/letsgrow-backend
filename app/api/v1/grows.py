@@ -127,7 +127,11 @@ async def update_grow(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Atualiza o ambiente.
+    """Atualiza o ambiente. So os campos enviados mudam.
+
+    Enviar `null` apaga um campo opcional (por exemplo "Nao sei" num booleano). `name`,
+    `grow_type`, `status`, `has_environment_sensors` e `exhaust_power_pct` nao aceitam null (422).
+    `fans: []` registra que nao ha ventiladores; `fans: null` volta a "nao informado".
 
     `exhaust_power_pct` e so o registro da potencia ajustada no controlador do exaustor:
     nada e enviado ao equipamento. Quando o valor muda, o servidor grava
@@ -135,7 +139,8 @@ async def update_grow(
     """
     grow = await _get_grow_or_404(grow_id, current_user.id, db)
     previous_power = grow.exhaust_power_pct
-    changes = body.model_dump(exclude_none=True)
+    # exclude_unset: null enviado de proposito apaga o campo; campo ausente nao muda.
+    changes = body.model_dump(exclude_unset=True)
     new_status = changes.pop("status", None)
     for field, value in changes.items():
         setattr(grow, field, value)

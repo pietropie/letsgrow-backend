@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime, time
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Constantes de enum (documentam os valores aceitos)
@@ -57,6 +57,11 @@ class GrowCreate(BaseModel):
 
 GrowStatus = Literal["active", "harvested", "abandoned"]
 
+# Campos do GrowUpdate que nao aceitam null: colunas NOT NULL e a potencia do exaustor
+# (registrada uma vez, nao volta a vazio). Os demais aceitam null para apagar o valor
+# ("Nao sei" nos booleanos). Campo ausente no corpo nunca muda nada.
+NON_NULLABLE_ON_UPDATE = frozenset({"name", "grow_type", "status", "has_environment_sensors", "exhaust_power_pct"})
+
 
 class GrowUpdate(BaseModel):
     name: str | None = None
@@ -105,6 +110,14 @@ class GrowUpdate(BaseModel):
     has_environment_sensors: bool | None = None
     notes: str | None = None
 
+    @model_validator(mode="after")
+    def _required_fields_are_not_cleared(self):
+        # PATCH grava os nulos enviados de proposito (exclude_unset). Estes campos nao podem
+        # ficar vazios: recusar e mais seguro do que ignorar o null em silencio.
+        cleared = sorted(f for f in NON_NULLABLE_ON_UPDATE if f in self.model_fields_set and getattr(self, f) is None)
+        if cleared:
+            raise ValueError(f"Estes campos não podem ficar vazios: {', '.join(cleared)}")
+        return self
 
 
 class EnvironmentMeasurement(BaseModel):
