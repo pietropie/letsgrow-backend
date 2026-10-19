@@ -28,8 +28,14 @@ class GrowCreate(BaseModel):
     lighting_watts: int | None = None
     light_type: str | None = None
     light_distance_cm: int | None = None
+    # Derivado pelo servidor; clientes antigos podem enviar "N/M"
     photoperiod_hours: str | None = None
     photoperiod_on_at: time | None = None
+    photoperiod_light_minutes: int | None = Field(
+        default=None, ge=1, le=1440,
+        description="Duracao da luz em minutos (1-1440). O servidor deriva photoperiod_hours. "
+                    "Exige photoperiod_on_at (no corpo ou ja salvo), exceto 1440 (24/0). null volta a 'nao informado'.",
+    )
     light_leak_controlled: bool | None = None
     exhaust_type: str | None = None
     exhaust_cfm: int | None = None
@@ -76,8 +82,14 @@ class GrowUpdate(BaseModel):
     lighting_watts: int | None = None
     light_type: str | None = None
     light_distance_cm: int | None = None
+    # Derivado pelo servidor; clientes antigos podem enviar "N/M"
     photoperiod_hours: str | None = None
     photoperiod_on_at: time | None = None
+    photoperiod_light_minutes: int | None = Field(
+        default=None, ge=1, le=1440,
+        description="Duracao da luz em minutos (1-1440). O servidor deriva photoperiod_hours. "
+                    "Exige photoperiod_on_at (no corpo ou ja salvo), exceto 1440 (24/0). null volta a 'nao informado'.",
+    )
     light_leak_controlled: bool | None = None
     exhaust_type: str | None = None
     exhaust_cfm: int | None = None
@@ -153,6 +165,7 @@ class GrowSummary(BaseModel):
     start_date: date
     archived_at: datetime | None = None
     photoperiod_hours: str | None = None
+    photoperiod_light_minutes: int | None = None
     pot_count: int = 0
     active_plant_count: int
     days_running: int
@@ -178,6 +191,7 @@ class GrowResponse(BaseModel):
     light_distance_cm: int | None
     photoperiod_hours: str | None
     photoperiod_on_at: time | None
+    photoperiod_light_minutes: int | None = None
     light_leak_controlled: bool | None
     exhaust_type: str | None
     exhaust_cfm: int | None

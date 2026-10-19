@@ -40,8 +40,11 @@ class Grow(Base, TimestampMixin):
     light_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
     light_distance_cm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # "18/6" | "12/12" | "20/4" | "24/0" | "custom"
-    photoperiod_hours: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Derivado de photoperiod_light_minutes: "18/6" ou "10h05/13h55" (ate 11 caracteres)
+    photoperiod_hours: Mapped[str | None] = mapped_column(String(16), nullable=True)
     photoperiod_on_at: Mapped[time | None] = mapped_column(Time, nullable=True)
+    # Duracao da luz em minutos (1-1440). photoperiod_hours e derivado dela (app/services/photoperiod.py).
+    photoperiod_light_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     light_leak_controlled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     # --- Ventilação ---

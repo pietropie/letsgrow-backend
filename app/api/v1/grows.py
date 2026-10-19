@@ -22,6 +22,7 @@ from app.schemas.grow import (
 )
 from app.services.auth import get_current_user
 from app.services.grow_env import latest_grow_env
+from app.services.photoperiod import apply_photoperiod
 from app.services.subscription import check_grow_limit, check_plant_limit
 
 router = APIRouter()
@@ -71,6 +72,7 @@ async def list_grows(
                 start_date=grow.start_date,
                 archived_at=grow.archived_at,
                 photoperiod_hours=grow.photoperiod_hours,
+                photoperiod_light_minutes=grow.photoperiod_light_minutes,
                 pot_count=0,
                 active_plant_count=active_count,
                 days_running=(date.today() - grow.start_date).days,
@@ -92,7 +94,13 @@ async def create_grow(
     current_count = count_result.scalar() or 0
     check_grow_limit(current_user, current_count)
 
-    grow = Grow(user_id=current_user.id, **body.model_dump())
+    data = body.model_dump()
+    photoperiod = {k: data.pop(k) for k in ('photoperiod_hours', 'photoperiod_on_at', 'photoperiod_light_minutes')
+                   if k in body.model_fields_set}
+    for k in ('photoperiod_hours', 'photoperiod_on_at', 'photoperiod_light_minutes'):
+        data.pop(k, None)
+    grow = Grow(user_id=current_user.id, **data)
+    apply_photoperiod(grow, photoperiod)
     db.add(grow)
     await db.commit()
     await db.refresh(grow)
@@ -142,6 +150,8 @@ async def update_grow(
     # exclude_unset: null enviado de proposito apaga o campo; campo ausente nao muda.
     changes = body.model_dump(exclude_unset=True)
     new_status = changes.pop("status", None)
+    # Programacao de luz: duracao em minutos, texto derivado e compatibilidade com "N/M".
+    apply_photoperiod(grow, changes)
     for field, value in changes.items():
         setattr(grow, field, value)
     # Arquivar e restaurar seguem a mesma regra dos endpoints dedicados (plantas juntas).
