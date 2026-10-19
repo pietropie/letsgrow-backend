@@ -69,7 +69,8 @@ class PlanStatusResponse(BaseModel):
     plants_used: int
     grows_used: int
     ai_queries_used: int
-    ai_queries_reset_at: datetime
+    ai_queries_reset_at: datetime          # ultimo reset da cota
+    ai_queries_renews_at: datetime         # proximo reset (dia 1 do mes seguinte)
 
 
 # ---------------------------------------------------------------------------

@@ -118,6 +118,20 @@ def check_sensor_access(user: User) -> None:
 
 # ── Status do plano ───────────────────────────────────────────────────────────
 
+def next_ai_quota_reset(reset_at: datetime, now: datetime | None = None) -> datetime:
+    """Proximo reset da cota mensal do Bobby.
+
+    `ai_queries_reset_at` guarda o ultimo reset. O worker (`workers/knowledge.py`) zera a cota
+    quando essa data fica antes do dia 1 do mes corrente, ou seja, no dia 1 do mes seguinte.
+    """
+    now = now or datetime.now(timezone.utc)
+    if reset_at.tzinfo is None:
+        reset_at = reset_at.replace(tzinfo=timezone.utc)
+    base = max(reset_at, now)
+    year, month = (base.year + 1, 1) if base.month == 12 else (base.year, base.month + 1)
+    return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
 def get_plan_status(user: User, current_plant_count: int, current_grow_count: int) -> dict:
     effective = _effective_plan(user)
     limits = _plan_limits(effective)
@@ -144,4 +158,5 @@ def get_plan_status(user: User, current_plant_count: int, current_grow_count: in
         "grows_used": current_grow_count,
         "ai_queries_used": user.ai_queries_this_month,
         "ai_queries_reset_at": user.ai_queries_reset_at,
+        "ai_queries_renews_at": next_ai_quota_reset(user.ai_queries_reset_at),
     }
