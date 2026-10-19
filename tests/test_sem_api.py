@@ -554,6 +554,7 @@ class AccountTests(Base_):
     def test_deletion_uses_admin_grace_can_be_canceled_and_removes_everything_when_due(self):
         self.settings_row.account_deletion_grace_days = 3
         self.session.commit()
+        self.assertEqual(self.client.get('/account/deletion-policy').json(), {'grace_days': 3})  # diálogo de confirmação
         self.assertEqual(self.client.post('/account/deletion-request', json={'confirm': False}).status_code, 422)
         created = self.client.post('/account/deletion-request', json={'confirm': True})
         self.assertEqual(created.status_code, 202)

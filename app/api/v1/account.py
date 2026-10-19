@@ -4,6 +4,7 @@ Conta (LGPD): copia dos dados e exclusao com carencia.
 POST   /account/data-exports               – pede a copia (202); processada em segundo plano
 GET    /account/data-exports               – pedidos e estado
 GET    /account/data-exports/{id}/download – URL assinada curta (somente o dono)
+GET    /account/deletion-policy            – carencia atual, antes de pedir a exclusao
 GET    /account/deletion-request           – pedido de exclusao ativo (404 se nao houver)
 POST   /account/deletion-request           – agenda a exclusao (carencia definida no admin)
 DELETE /account/deletion-request           – cancela durante a carencia
@@ -147,6 +148,19 @@ def _deletion_out(row: AccountDeletionRequest) -> DeletionOut:
         id=row.id, status=row.status, requested_at=row.requested_at,
         scheduled_for=row.scheduled_for, grace_days=days,
     )
+
+
+class DeletionPolicyOut(BaseModel):
+    grace_days: int
+
+
+@router.get("/deletion-policy", response_model=DeletionPolicyOut)
+async def get_deletion_policy(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Carencia atual (admin), mostrada no dialogo de confirmacao antes do pedido."""
+    return DeletionPolicyOut(grace_days=(await get_app_settings(db)).account_deletion_grace_days)
 
 
 @router.get("/deletion-request", response_model=DeletionOut)
