@@ -28,6 +28,7 @@ from app.schemas.plant import (
 )
 from app.schemas.common import MessageResponse
 from app.services.auth import get_current_user
+from app.services.plant_phase import apply_phase_event
 from app.services.subscription import check_plant_limit
 
 logger = logging.getLogger(__name__)
@@ -402,14 +403,8 @@ async def create_event(
     event = GrowEvent(plant_id=plant_id, **event_data)
     db.add(event)
 
-    # Auto-update plant phase on special event types
-    if body.event_type == "flip" and plant.current_phase == "veg":
-        plant.current_phase = "flower"
-        plant.flip_date = body.event_date.date()
-    elif body.event_type == "harvest":
-        plant.current_phase = "done"
-        plant.harvest_date = body.event_date.date()
-        plant.is_active = False
+    # Registros FASE (germinação, muda, vega, flip, colheita) atualizam a fase da planta
+    apply_phase_event(plant, body.event_type, body.event_date)
 
     await db.commit()
     await db.refresh(event)

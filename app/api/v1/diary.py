@@ -27,6 +27,7 @@ from app.models.plant import Plant
 from app.models.strain import Strain
 from app.models.user import User
 from app.services.auth import get_current_user
+from app.services.plant_phase import apply_phase_event
 from app.services.storage import BUCKET_EVENTS, presign_download, strain_image_url_for_response
 from app.services.upload_access import owns_upload, require_owned_event_photos
 
@@ -219,6 +220,8 @@ async def create_diary_entries(
         ev = GrowEvent(plant_id=plant_id, **event_fields)
         db.add(ev)
         created_events.append(ev)
+        # Mesma regra do registro individual (POST /plants/{id}/events)
+        apply_phase_event(owned_plants[plant_id], body.event_type, body.event_date)
 
     await db.commit()
     for ev in created_events:
