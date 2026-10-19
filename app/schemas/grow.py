@@ -55,10 +55,15 @@ class GrowCreate(BaseModel):
     notes: str | None = None
 
 
+GrowStatus = Literal["active", "harvested", "abandoned"]
+
+
 class GrowUpdate(BaseModel):
     name: str | None = None
     grow_type: str | None = None
-    status: str | None = None
+    # abandoned arquiva o ambiente com as plantas ativas; active restaura (mesma regra de
+    # DELETE /grows/{id} e POST /grows/{id}/restore)
+    status: GrowStatus | None = None
     end_date: date | None = None
     tent_width_cm: int | None = None
     tent_depth_cm: int | None = None
@@ -101,6 +106,7 @@ class GrowUpdate(BaseModel):
     notes: str | None = None
 
 
+
 class EnvironmentMeasurement(BaseModel):
     value: float | None = None
     unit: str
@@ -132,6 +138,7 @@ class GrowSummary(BaseModel):
     grow_type: str
     status: str
     start_date: date
+    archived_at: datetime | None = None
     photoperiod_hours: str | None = None
     pot_count: int = 0
     active_plant_count: int
@@ -149,6 +156,7 @@ class GrowResponse(BaseModel):
     status: str
     start_date: date
     end_date: date | None
+    archived_at: datetime | None = None
     tent_width_cm: int | None
     tent_depth_cm: int | None
     tent_height_cm: int | None
@@ -203,3 +211,13 @@ class GrowPlantBrief(BaseModel):
 
 class GrowDetailResponse(GrowResponse):
     plants: list[GrowPlantBrief] = []
+
+
+class GrowArchiveResult(BaseModel):
+    """Resposta de DELETE /grows/{id} (arquivar) e POST /grows/{id}/restore."""
+    message: str
+    grow_id: uuid.UUID
+    status: str
+    archived_at: datetime | None
+    # Plantas arquivadas junto (DELETE) ou restauradas junto (restore)
+    plants_affected: int

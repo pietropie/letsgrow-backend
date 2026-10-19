@@ -39,6 +39,11 @@ class Plant(Base, TimestampMixin):
     expected_harvest_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Preenchido quando a planta foi arquivada junto com o ambiente (DELETE /grows/{id});
+    # restaurar o ambiente reativa so essas plantas e limpa a marca.
+    archived_with_grow_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grows.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # Legado — filtros usam grow_id. Coluna permanece um release para backfill.
     grow_label: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
@@ -49,7 +54,7 @@ class Plant(Base, TimestampMixin):
     substrate: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     user = relationship("User", back_populates="plants")
-    grow = relationship("Grow", back_populates="plants")
+    grow = relationship("Grow", back_populates="plants", foreign_keys=[grow_id])
     events = relationship(
         "GrowEvent", back_populates="plant", cascade="all, delete-orphan", order_by="GrowEvent.event_date.desc()"
     )

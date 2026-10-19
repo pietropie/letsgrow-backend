@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -12,6 +12,7 @@ from app.models.plant import Plant
 from app.models.user import User
 from app.schemas.common import MessageResponse
 from app.schemas.grow import (
+    GrowArchiveResult,
     GrowCreate,
     GrowDetailResponse,
     GrowPlantBrief,
@@ -21,7 +22,7 @@ from app.schemas.grow import (
 )
 from app.services.auth import get_current_user
 from app.services.grow_env import latest_grow_env
-from app.services.subscription import check_grow_limit
+from app.services.subscription import check_grow_limit, check_plant_limit
 
 router = APIRouter()
 
@@ -68,6 +69,7 @@ async def list_grows(
                 grow_type=grow.grow_type,
                 status=grow.status,
                 start_date=grow.start_date,
+                archived_at=grow.archived_at,
                 photoperiod_hours=grow.photoperiod_hours,
                 pot_count=0,
                 active_plant_count=active_count,
@@ -133,8 +135,17 @@ async def update_grow(
     """
     grow = await _get_grow_or_404(grow_id, current_user.id, db)
     previous_power = grow.exhaust_power_pct
-    for field, value in body.model_dump(exclude_none=True).items():
+    changes = body.model_dump(exclude_none=True)
+    new_status = changes.pop("status", None)
+    for field, value in changes.items():
         setattr(grow, field, value)
+    # Arquivar e restaurar seguem a mesma regra dos endpoints dedicados (plantas juntas).
+    if new_status == "abandoned" and grow.status != "abandoned":
+        await _archive(db, grow)
+    elif new_status == "active" and grow.status == "abandoned":
+        await _restore(db, grow, current_user)
+    elif new_status is not None:
+        grow.status = new_status
     if body.exhaust_power_pct is not None and body.exhaust_power_pct != previous_power:
         now = datetime.now(timezone.utc)
         grow.exhaust_power_updated_at = now
@@ -142,20 +153,86 @@ async def update_grow(
         db.add(EnvironmentReading(
             grow_id=grow.id, user_id=current_user.id, observed_at=now,
             notes=f"Potência do exaustor {verb} {body.exhaust_power_pct}%",
-            created_at=now, updated_at=now,
+            kind="exhaust_power", created_at=now, updated_at=now,
         ))
     await db.commit()
     await db.refresh(grow)
     return _grow_response(grow, await latest_grow_env(db, grow.id))
 
 
-@router.delete("/{grow_id}", response_model=MessageResponse)
+async def _archive(db: AsyncSession, grow: Grow) -> int:
+    """Arquiva o ambiente e as plantas ativas dele, marcando-as. Nao faz commit."""
+    result = await db.execute(
+        update(Plant)
+        .where(Plant.grow_id == grow.id, Plant.user_id == grow.user_id, Plant.is_active == True)  # noqa: E712
+        .values(is_active=False, archived_with_grow_id=grow.id)
+        .execution_options(synchronize_session=False)
+    )
+    grow.status = "abandoned"
+    grow.archived_at = datetime.now(timezone.utc)
+    return result.rowcount or 0
+
+
+async def _restore(db: AsyncSession, grow: Grow, user: User) -> int:
+    """Reativa o ambiente e so as plantas arquivadas junto com ele. Nao faz commit."""
+    active_grows = (await db.execute(
+        select(func.count(Grow.id)).where(Grow.user_id == user.id, Grow.status == "active")
+    )).scalar() or 0
+    check_grow_limit(user, active_grows)
+    plant_ids = (await db.execute(
+        select(Plant.id).where(Plant.archived_with_grow_id == grow.id, Plant.user_id == user.id)
+    )).scalars().all()
+    if plant_ids:
+        active_plants = (await db.execute(
+            select(func.count(Plant.id)).where(Plant.user_id == user.id, Plant.is_active == True)  # noqa: E712
+        )).scalar() or 0
+        # Falha se as plantas restauradas passarem do limite do plano.
+        check_plant_limit(user, active_plants + len(plant_ids) - 1)
+        await db.execute(
+            update(Plant)
+            .where(Plant.id.in_(plant_ids))
+            .values(is_active=True, archived_with_grow_id=None)
+            .execution_options(synchronize_session=False)
+        )
+    grow.status = "active"
+    grow.archived_at = None
+    return len(plant_ids)
+
+
+@router.delete("/{grow_id}", response_model=GrowArchiveResult)
 async def delete_grow(
     grow_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Arquiva o ambiente (nao apaga). Na mesma transacao, arquiva as plantas ativas dele e
+    marca cada uma com `archived_with_grow_id`. Arquivar de novo nao muda nada."""
     grow = await _get_grow_or_404(grow_id, current_user.id, db)
-    grow.status = "abandoned"
-    await db.commit()
-    return MessageResponse(message="Grow arquivado com sucesso")
+    archived = 0
+    if grow.status != "abandoned":
+        archived = await _archive(db, grow)
+        await db.commit()
+    return GrowArchiveResult(
+        message="Grow arquivado com sucesso", grow_id=grow.id, status=grow.status,
+        archived_at=grow.archived_at, plants_affected=archived,
+    )
+
+
+@router.post("/{grow_id}/restore", response_model=GrowArchiveResult)
+async def restore_grow(
+    grow_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restaura um ambiente arquivado e, na mesma transacao, so as plantas arquivadas junto
+    com ele. Plantas arquivadas antes, separadamente, continuam arquivadas. Respeita os limites
+    do plano (403). Restaurar um ambiente ativo nao muda nada."""
+    grow = await _get_grow_or_404(grow_id, current_user.id, db)
+    restored = 0
+    if grow.status == "abandoned":
+        restored = await _restore(db, grow, current_user)
+        await db.commit()
+    return GrowArchiveResult(
+        message="Grow restaurado com sucesso", grow_id=grow.id, status=grow.status,
+        archived_at=grow.archived_at, plants_affected=restored,
+    )

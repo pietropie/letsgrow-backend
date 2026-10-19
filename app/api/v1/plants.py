@@ -322,6 +322,9 @@ async def update_plant(
         updates["grow_label"] = grow.name
     for field, value in updates.items():
         setattr(plant, field, value)
+    if "is_active" in updates:
+        # Mudanca manual de estado desfaz o vinculo com o arquivamento do ambiente.
+        plant.archived_with_grow_id = None
     await db.commit()
     await db.refresh(plant)
     return plant
@@ -340,6 +343,7 @@ async def delete_plant(
     """Soft delete: marca a planta como inativa (is_active = False)."""
     plant = await _get_plant_or_404(plant_id, current_user.id, db)
     plant.is_active = False
+    plant.archived_with_grow_id = None
     await db.commit()
     return MessageResponse(message="Planta desativada")
 

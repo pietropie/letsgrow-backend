@@ -24,6 +24,7 @@ class Grow(Base, TimestampMixin):
     # indoor | outdoor | greenhouse
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
     # active | harvested | abandoned
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -90,7 +91,7 @@ class Grow(Base, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user = relationship("User")
-    plants = relationship("Plant", back_populates="grow")
+    plants = relationship("Plant", back_populates="grow", foreign_keys="Plant.grow_id")
     pots = relationship("Pot", back_populates="grow", cascade="all, delete-orphan", order_by="Pot.position")
     sensor_devices = relationship("SensorDevice", back_populates="grow")
     conversations = relationship("AIConversation", back_populates="grow")

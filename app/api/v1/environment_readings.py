@@ -98,6 +98,8 @@ class EnvironmentReadingResponse(BaseModel):
     temperature_c: float | None
     humidity_rh: float | None
     notes: str | None
+    # manual = registrado no app | exhaust_power = registro automatico do dimmer (somente leitura)
+    kind: str
     created_at: datetime
     updated_at: datetime
 
@@ -135,6 +137,15 @@ async def _own_reading(
     return reading
 
 
+def _require_manual(reading: EnvironmentReading) -> None:
+    if reading.kind != "manual":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Registro automático da potência do exaustor: não pode ser editado nem apagado. "
+                   "Para mudar, ajuste a potência no painel do ambiente.",
+        )
+
+
 @router.post(
     "/{grow_id}/readings",
     response_model=EnvironmentReadingResponse,
@@ -154,6 +165,7 @@ async def create_reading(
         id=uuid.uuid4(),
         grow_id=grow.id,
         user_id=current_user.id,
+        kind="manual",
         created_at=now,
         updated_at=now,
         **body.model_dump(),
@@ -215,6 +227,7 @@ async def update_reading(
     db: AsyncSession = Depends(get_db),
 ):
     reading = await _own_reading(db, grow_id, reading_id, current_user.id)
+    _require_manual(reading)
     changes = body.model_dump(exclude_unset=True)
     if "observed_at" in changes and changes["observed_at"] is None:
         raise HTTPException(status_code=422, detail="observed_at não pode ser removido")
@@ -236,6 +249,7 @@ async def delete_reading(
     db: AsyncSession = Depends(get_db),
 ):
     reading = await _own_reading(db, grow_id, reading_id, current_user.id)
+    _require_manual(reading)
     await db.delete(reading)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

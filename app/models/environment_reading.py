@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,3 +24,5 @@ class EnvironmentReading(Base, TimestampMixin):
     temperature_c: Mapped[float | None] = mapped_column(Float, nullable=True)
     humidity_rh: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # manual = registrado no app | exhaust_power = registro automatico do dimmer (somente leitura)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="manual", server_default="manual")
