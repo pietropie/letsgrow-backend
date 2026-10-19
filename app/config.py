@@ -115,7 +115,7 @@ class Settings(BaseSettings):
 
     # Resend (e-mail transacional)
     RESEND_API_KEY: str = ""
-    RESEND_FROM_EMAIL: str = "noreply@letsgrow.app"
+    RESEND_FROM_EMAIL: str = "no-reply@updates.letsgrowapp.com.br"
 
     # Compra de creditos: provedor de pagamento ("unconfigured" = compra indisponivel).
     # Precos, pacotes e custos ficam no painel admin, nao aqui.
