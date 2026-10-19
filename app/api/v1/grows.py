@@ -108,10 +108,13 @@ async def get_grow(
     )
     plants = plants_result.scalars().all()
     env = await latest_grow_env(db, grow.id)
-    detail = GrowDetailResponse.model_validate(grow)
-    detail.env = env
-    detail.plants = [GrowPlantBrief.model_validate(p) for p in plants]
-    return detail
+    # Validar via GrowResponse: GrowDetailResponse leria a relação lazy Grow.plants,
+    # o que na AsyncSession dispara MissingGreenlet (HTTP 500).
+    return GrowDetailResponse(
+        **GrowResponse.model_validate(grow).model_dump(exclude={"env"}),
+        env=env,
+        plants=[GrowPlantBrief.model_validate(p) for p in plants],
+    )
 
 
 @router.patch("/{grow_id}", response_model=GrowResponse)
