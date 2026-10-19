@@ -1,3 +1,4 @@
+import logging
 import re
 import uuid
 
@@ -45,6 +46,12 @@ from app.services.redis_client import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _log_verification_failure(context: str, error: Exception) -> None:
+    # Provider messages/tracebacks may contain recipient addresses or OTPs.
+    logger.error("verification_email_failed context=%s error_type=%s", context, type(error).__name__)
 
 
 # ─── Schemas locais ───────────────────────────────────────────────────────────
@@ -91,8 +98,8 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
             name=body.full_name or body.username,
             code=code,
         )
-    except Exception:
-        pass  # não bloqueia cadastro por falha de email
+    except Exception as error:
+        _log_verification_failure("register", error)
 
     return RegisterResponse(email=str(body.email))
 
@@ -156,8 +163,8 @@ async def resend_verification(body: ResendVerificationRequest, db: AsyncSession 
             name=user.full_name or user.username,
             code=code,
         )
-    except Exception:
-        pass
+    except Exception as error:
+        _log_verification_failure("resend", error)
 
 
 # ─── Login ────────────────────────────────────────────────────────────────────
@@ -182,8 +189,8 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
                 name=user.full_name or user.username,
                 code=code,
             )
-        except Exception:
-            pass
+        except Exception as error:
+            _log_verification_failure("login", error)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="email_not_verified",
