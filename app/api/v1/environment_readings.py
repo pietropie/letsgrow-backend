@@ -116,7 +116,7 @@ async def _own_grow(db: AsyncSession, grow_id: uuid.UUID, user_id: uuid.UUID) ->
         await db.execute(select(Grow).where(Grow.id == grow_id, Grow.user_id == user_id))
     ).scalar_one_or_none()
     if grow is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
     return grow
 
 

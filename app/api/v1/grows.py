@@ -34,7 +34,7 @@ async def _get_grow_or_404(grow_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSess
     )
     grow = result.scalar_one_or_none()
     if not grow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
     return grow
 
 
@@ -228,7 +228,7 @@ async def delete_grow(
         archived = await _archive(db, grow)
         await db.commit()
     return GrowArchiveResult(
-        message="Grow arquivado com sucesso", grow_id=grow.id, status=grow.status,
+        message="Ambiente arquivado com sucesso", grow_id=grow.id, status=grow.status,
         archived_at=grow.archived_at, plants_affected=archived,
     )
 
@@ -248,6 +248,6 @@ async def restore_grow(
         restored = await _restore(db, grow, current_user)
         await db.commit()
     return GrowArchiveResult(
-        message="Grow restaurado com sucesso", grow_id=grow.id, status=grow.status,
+        message="Ambiente restaurado com sucesso", grow_id=grow.id, status=grow.status,
         archived_at=grow.archived_at, plants_affected=restored,
     )

@@ -65,7 +65,7 @@ def check_grow_limit(user: User, current_grow_count: int) -> None:
     if current_grow_count >= limits["max_grows"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Limite de grows atingido para o plano {plan.upper()}. Faca upgrade para continuar.",
+            detail=f"Limite de ambientes atingido para o plano {plan.upper()}. Faça upgrade para continuar.",
         )
 
 
@@ -75,7 +75,7 @@ def check_pot_limit(user: User, current_pot_count: int) -> None:
     if current_pot_count >= limits["max_pots_per_grow"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Limite de vasos por grow atingido para o plano {plan.upper()}.",
+            detail=f"Limite de vasos por ambiente atingido para o plano {plan.upper()}.",
         )
 
 

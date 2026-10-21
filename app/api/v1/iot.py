@@ -215,7 +215,7 @@ async def register_device(
             select(Grow).where(Grow.id == resolved_grow_id, Grow.user_id == current_user.id)
         )
         if not grow_result.scalar_one_or_none():
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
 
     mac_result = await db.execute(
         select(SensorDevice).where(SensorDevice.esp32_mac == body.esp32_mac)
@@ -303,7 +303,7 @@ async def patch_device(
             select(Grow).where(Grow.id == body.grow_id, Grow.user_id == current_user.id)
         )
         if not grow_result.scalar_one_or_none():
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
         device.grow_id = body.grow_id
         device.is_paired = True
 

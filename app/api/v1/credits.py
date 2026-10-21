@@ -211,7 +211,7 @@ async def quote_task(
             await db.execute(select(Grow).where(Grow.id == body.grow_id, Grow.user_id == current_user.id))
         ).scalar_one_or_none()
         if grow is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
         scope.update(grow_id=str(grow.id), grow_name=grow.name)
 
     quote, balance = await create_quote(db, current_user, body.task, scope or None)

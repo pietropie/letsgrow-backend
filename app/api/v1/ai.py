@@ -85,7 +85,7 @@ async def chat_endpoint(
         )
         grow = grow_result.scalar_one_or_none()
         if not grow:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow nao encontrado")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
 
     plant = None
     if body.plant_id:

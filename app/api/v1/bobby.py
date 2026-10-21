@@ -96,7 +96,7 @@ async def create_feedback(
             await db.execute(select(Grow.id).where(Grow.id == body.grow_id, Grow.user_id == current_user.id))
         ).scalar_one_or_none()
         if owned is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
 
     feedback = BobFeedback(
         id=uuid.uuid4(),

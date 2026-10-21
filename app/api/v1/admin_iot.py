@@ -160,7 +160,7 @@ async def simulate_discovery(
         if not grow_result.scalar_one_or_none():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Grow '{body.grow_id}' nao encontrado.",
+                detail=f"Ambiente '{body.grow_id}' não encontrado.",
             )
 
     # 1b. Valida plant_id (opcional — pareia imediatamente se informado)

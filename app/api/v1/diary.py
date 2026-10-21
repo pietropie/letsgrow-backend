@@ -210,7 +210,7 @@ async def create_diary_entries(
         if mismatched:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Todas as plantas do registro multiplo devem pertencer ao mesmo grow",
+                detail="Todas as plantas do registro múltiplo devem pertencer ao mesmo ambiente",
             )
 
     event_fields = body.model_dump(exclude={"plant_ids", "grow_id"})

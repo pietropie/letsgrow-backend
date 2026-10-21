@@ -24,7 +24,7 @@ async def _get_grow_or_404(grow_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSess
     )
     grow = result.scalar_one_or_none()
     if not grow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
     return grow
 
 

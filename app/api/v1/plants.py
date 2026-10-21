@@ -195,11 +195,11 @@ async def create_plant(
     )
     grow = grow_result.scalar_one_or_none()
     if not grow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
     if grow.status == "abandoned":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Não é possível criar planta em um grow arquivado",
+            detail="Não é possível criar planta em um ambiente arquivado",
         )
 
     count_result = await db.execute(
@@ -313,11 +313,11 @@ async def update_plant(
         )
         grow = grow_result.scalar_one_or_none()
         if not grow:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grow não encontrado")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
         if grow.status == "abandoned":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Não é possível mover planta para um grow arquivado",
+                detail="Não é possível mover planta para um ambiente arquivado",
             )
         updates["grow_label"] = grow.name
     for field, value in updates.items():
