@@ -12,6 +12,7 @@ import json
 import unittest
 import uuid
 import zipfile
+from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -75,6 +76,13 @@ def run(coro):
 
 def iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+@contextmanager
+def fake_chat(reply='ok', error=None):
+    """Resposta da IA simulada; o prompt e montado de verdade, sem a busca vetorial."""
+    with patch('app.services.rag.retrieve_chunks', new=AsyncMock(return_value=[])),          patch('app.api.v1.ai.run_chat', new=AsyncMock(return_value=reply, side_effect=error)):
+        yield
 
 
 class Base_(unittest.TestCase):
@@ -407,7 +415,7 @@ class CreditTests(Base_):
         self.assertEqual(quote['scope']['plant_name'], 'Aurora')
         self.assertEqual(self.client.post('/credits/quote', json={'task': 'chat_message', 'plant_id': str(self.other_plant.id)}).status_code, 404)
 
-        with patch('app.api.v1.ai.chat', new=AsyncMock(return_value='Resposta do Bobby')):
+        with fake_chat('Resposta do Bobby'):
             missing = self.client.post('/ai/chat', json={'message': 'Como está a Aurora?'})
             self.assertEqual(missing.status_code, 402)
             self.assertEqual(missing.json()['detail']['code'], 'quote_required')
@@ -427,7 +435,7 @@ class CreditTests(Base_):
     def test_failure_releases_reservation_and_insufficient_balance_blocks(self):
         self.enable(monthly=4)
         quote = self.quote()
-        with patch('app.api.v1.ai.chat', new=AsyncMock(side_effect=RuntimeError('IA fora do ar'))):
+        with fake_chat(error=RuntimeError('IA fora do ar')):
             with self.assertRaises(RuntimeError):
                 self.client.post('/ai/chat', json={'message': 'Oi', 'quote_id': quote['quote_id']})
         self.assertEqual(self.client.get('/credits/balance').json()['available'], 4)
@@ -436,7 +444,7 @@ class CreditTests(Base_):
         self.assertEqual(self.session.scalar(select(func.count(AIConversation.id))), 0)
 
         first = self.quote()
-        with patch('app.api.v1.ai.chat', new=AsyncMock(return_value='ok')):
+        with fake_chat('ok'):
             self.assertEqual(self.client.post('/ai/chat', json={'message': 'Oi', 'quote_id': first['quote_id']}).status_code, 200)
             second = self.quote()
             self.assertFalse(second['sufficient'])
@@ -489,7 +497,7 @@ class CreditTests(Base_):
         self.owner.ai_queries_this_month = 99
         self.session.commit()
         quote = self.quote()
-        with patch('app.api.v1.ai.chat', new=AsyncMock(return_value='ok')):
+        with fake_chat('ok'):
             response = self.client.post('/ai/chat', json={'message': 'Oi', 'quote_id': quote['quote_id']})
         self.assertEqual(response.status_code, 403)
         self.assertEqual(self.client.get('/credits/balance').json()['available'], 10)
