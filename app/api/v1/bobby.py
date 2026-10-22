@@ -1,7 +1,8 @@
 """
 Bobby: correcao de contexto e memoria editavel pelo usuario.
 
-POST   /bob/feedback            – "Ajude a corrigir o contexto" (sem IA, sem creditos)
+POST   /bob/feedback            – "Ajude a corrigir o contexto" ou avaliacao de uma resposta do chat
+                                  (gostei/nao gostei + motivo), sem IA, sem creditos
 GET    /bob/memories            – preferencias guardadas
 POST   /bob/memories            – nova preferencia ("Informada por voce")
 PATCH  /bob/memories/{id}       – editar
@@ -12,8 +13,10 @@ As preferencias entram no prompt do chat (app/rag/prompts.build_system_prompt).
 import uuid
 from datetime import datetime, timezone
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +24,7 @@ from app.database import get_db
 from app.models.ai_config import AIConfig
 from app.models.bob import BobFeedback, BobMemory
 from app.models.grow import Grow
+from app.models.knowledge import AIConversation
 from app.models.plant import Plant
 from app.models.user import User
 from app.services.auth import get_current_user
@@ -38,19 +42,43 @@ def _strip_required(value: str) -> str:
     return value
 
 
+FeedbackReason = Literal["wrong_record", "missing_context", "not_helpful", "other"]
+
+
 class FeedbackCreate(BaseModel):
-    message: str = Field(min_length=1, max_length=1000)
+    """Correcao livre (message) ou avaliacao de uma resposta (conversation_id + message_id + rating/reason)."""
+    message: str | None = Field(default=None, max_length=1000)
     alert_id: str | None = Field(default=None, max_length=200)
     plant_id: uuid.UUID | None = None
     grow_id: uuid.UUID | None = None
     evidence_ids: list[str] | None = Field(default=None, max_length=20)
+    conversation_id: uuid.UUID | None = None
+    message_id: str | None = Field(default=None, max_length=64)
+    rating: Literal["up", "down"] | None = None
+    # "Usou um registro errado ou antigo" | "Faltou contexto" | "A resposta nao ajudou" | "Outro motivo"
+    reason: FeedbackReason | None = None
 
     model_config = {"extra": "forbid"}
 
     @field_validator("message")
     @classmethod
-    def _message(cls, value: str) -> str:
-        return _strip_required(value)
+    def _message(cls, value: str | None) -> str | None:
+        value = value.strip() if value else None
+        return value or None
+
+    @model_validator(mode="after")
+    def _shape(self):
+        if self.reason and self.rating is None:
+            self.rating = "down"
+        if self.reason and self.rating == "up":
+            raise ValueError("Motivo só vale para 'não gostei'")
+        if (self.message_id is None) != (self.conversation_id is None):
+            raise ValueError("Informe conversation_id e message_id juntos")
+        if (self.rating or self.reason) and self.message_id is None:
+            raise ValueError("A avaliação precisa da resposta avaliada (message_id)")
+        if not self.message and not self.rating:
+            raise ValueError("Escreva o que precisa ser corrigido")
+        return self
 
 
 class FeedbackCreated(BaseModel):
@@ -97,6 +125,38 @@ async def create_feedback(
         ).scalar_one_or_none()
         if owned is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
+    if body.message_id is not None:
+        conversation = (
+            await db.execute(
+                select(AIConversation).where(
+                    AIConversation.id == body.conversation_id, AIConversation.user_id == current_user.id
+                )
+            )
+        ).scalar_one_or_none()
+        answer = next(
+            (m for m in (conversation.messages or []) if isinstance(m, dict) and m.get("id") == body.message_id),
+            None,
+        ) if conversation else None
+        if answer is None or answer.get("role") != "assistant":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resposta não encontrada")
+        # Uma avaliacao por resposta: trocar de "gostei" para "nao gostei" atualiza a mesma linha.
+        existing = (
+            await db.execute(
+                select(BobFeedback).where(
+                    BobFeedback.user_id == current_user.id,
+                    BobFeedback.conversation_id == body.conversation_id,
+                    BobFeedback.message_id == body.message_id,
+                )
+            )
+        ).scalars().first()
+        if existing is not None:
+            existing.rating = body.rating
+            existing.reason = body.reason
+            existing.message = body.message
+            existing.status = "new"
+            existing.reviewed_at = None
+            await db.commit()
+            return FeedbackCreated(id=existing.id, created_at=existing.created_at)
 
     feedback = BobFeedback(
         id=uuid.uuid4(),
@@ -106,6 +166,10 @@ async def create_feedback(
         grow_id=body.grow_id,
         evidence_ids=[item[:100] for item in body.evidence_ids] if body.evidence_ids else None,
         message=body.message,
+        conversation_id=body.conversation_id,
+        message_id=body.message_id,
+        rating=body.rating,
+        reason=body.reason,
         status="new",
         created_at=datetime.now(timezone.utc),
     )

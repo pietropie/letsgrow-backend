@@ -344,7 +344,11 @@ class FeedbackAdminOut(BaseModel):
     plant_id: uuid.UUID | None
     grow_id: uuid.UUID | None
     evidence_ids: list | None
-    message: str
+    message: str | None
+    conversation_id: uuid.UUID | None = None
+    message_id: str | None = None
+    rating: str | None = None      # up | down (avaliacao de resposta do chat)
+    reason: str | None = None      # wrong_record | missing_context | not_helpful | other
     status: str
     created_at: datetime
     reviewed_at: datetime | None
@@ -366,7 +370,8 @@ async def admin_bob_feedback(
     return [
         FeedbackAdminOut(
             id=fb.id, user_email=email, alert_id=fb.alert_id, plant_id=fb.plant_id, grow_id=fb.grow_id,
-            evidence_ids=fb.evidence_ids, message=fb.message, status=fb.status,
+            evidence_ids=fb.evidence_ids, message=fb.message, conversation_id=fb.conversation_id,
+            message_id=fb.message_id, rating=fb.rating, reason=fb.reason, status=fb.status,
             created_at=fb.created_at, reviewed_at=fb.reviewed_at,
         )
         for fb, email in (await db.execute(stmt)).all()
@@ -386,7 +391,8 @@ async def admin_patch_feedback(feedback_id: uuid.UUID, body: StatusPatch, db: As
     user = await db.get(User, fb.user_id)
     return FeedbackAdminOut(
         id=fb.id, user_email=user.email if user else None, alert_id=fb.alert_id, plant_id=fb.plant_id,
-        grow_id=fb.grow_id, evidence_ids=fb.evidence_ids, message=fb.message, status=fb.status,
+        grow_id=fb.grow_id, evidence_ids=fb.evidence_ids, message=fb.message, conversation_id=fb.conversation_id,
+        message_id=fb.message_id, rating=fb.rating, reason=fb.reason, status=fb.status,
         created_at=fb.created_at, reviewed_at=fb.reviewed_at,
     )
 

@@ -68,7 +68,7 @@ class BobMemory(Base, TimestampMixin):
 
 
 class BobFeedback(Base):
-    """Correcao de contexto enviada pelo usuario; revisada pela equipe no admin."""
+    """Correcao de contexto (de um alerta) ou avaliacao de uma resposta do chat; revisada no admin."""
     __tablename__ = "bob_feedback"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -83,7 +83,16 @@ class BobFeedback(Base):
         UUID(as_uuid=True), ForeignKey("grows.id", ondelete="SET NULL"), nullable=True
     )
     evidence_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    message: Mapped[str] = mapped_column(Text, nullable=False)
+    # Avaliacao de uma resposta do chat (B3/B7): conversa, id da mensagem, gostei/nao gostei e motivo
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ai_conversations.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # up | down
+    rating: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # wrong_record | missing_context | not_helpful | other
+    reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
     # new | reviewed
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="new")
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
