@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.environment_reading import EnvironmentReading
+from app.services import chat_sources
 from app.models.event import GrowEvent
 from app.models.grow import Grow
 from app.models.plant import Plant
@@ -55,6 +56,7 @@ _TRAINING_SUBTYPE_LABELS: dict[str, str] = {
 
 def _format_event_line(ev: "GrowEvent") -> str:
     """Formata uma linha de evento com todos os campos disponíveis para o Bob."""
+    chat_sources.note_event(ev)  # registro injetado no prompt: vira fonte da resposta
     ev_line = f"    - {ev.event_date.strftime('%d/%m')} [{ev.event_type}]"
     parts: list[str] = []
 
@@ -459,6 +461,7 @@ async def _environment_record_lines(db: AsyncSession, grow: Grow, limit: int = 5
     if records:
         lines.append("Registros do ambiente:")
         for r in records:
+            chat_sources.note_environment_reading(r)
             parts = []
             if r.temperature_c is not None:
                 parts.append(f"{r.temperature_c:g} C")

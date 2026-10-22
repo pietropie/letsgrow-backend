@@ -1,5 +1,6 @@
 import logging
 import time
+from dataclasses import dataclass
 from datetime import date, datetime
 
 from sqlalchemy import select, text
@@ -14,7 +15,7 @@ from app.models.plant import Plant
 from app.models.sensor import SensorDevice, SensorReading
 from app.rag.prompts import build_customer_context, build_grow_context, build_plant_context, build_system_prompt
 from app.rag.retriever import retrieve_chunks
-from app.services import ai_provider
+from app.services import ai_provider, chat_sources
 
 logger = logging.getLogger(__name__)
 
@@ -116,43 +117,70 @@ def invalidate_cache() -> None:
     _cache["fetched_at"] = 0.0
 
 
-async def chat(
+@dataclass
+class PreparedChat:
+    """Prompt pronto para o LLM e as fontes que entraram nele."""
+    lc_messages: list
+    text_only_messages: list          # mesmo prompt sem as imagens (fallback sem visao)
+    sources: list[dict]
+    record_count: int
+    has_images: bool
+
+
+async def prepare_chat(
     db: AsyncSession,
-    conversation: AIConversation,
+    user_id,
+    history: list[dict],
     user_message: str,
     grow: Grow | None = None,
     plant: Plant | None = None,
     images: list[str] | None = None,
-) -> str:
-    from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+    image_keys: list[str | None] | None = None,
+) -> PreparedChat:
+    """Monta o prompt (contexto da conta, foco, base, preferencias) e registra as fontes injetadas.
 
-    # Contexto completo do cliente (todos grows + plantas + eventos recentes)
-    # injetado em TODA conversa, independentemente de grow/planta selecionados.
-    customer_ctx = await build_customer_context(db, conversation.user_id)
+    `history` sao as mensagens anteriores da conversa; `image_keys` (mesmo tamanho de `images`)
+    identifica fotos vindas de upload, para a fonte apontar para o arquivo.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-    # Contexto focado: planta específica (com grow vinculado) ou grow selecionado
-    plant_ctx = ""
-    grow_ctx = ""
-    if plant:
-        plant_grow: Grow | None = None
-        if plant.grow_id:
-            plant_grow = await db.get(Grow, plant.grow_id)
-        plant_ctx = await build_plant_context(db, plant, plant_grow)
-    elif grow:
-        grow_ctx = await build_grow_context(db, grow)
+    collector = chat_sources.SourceCollector()
+    with chat_sources.collecting(collector):
+        # Contexto completo do cliente (todos grows + plantas + eventos recentes)
+        # injetado em TODA conversa, independentemente de grow/planta selecionados.
+        with chat_sources.scope("account"):
+            customer_ctx = await build_customer_context(db, user_id)
 
-    # Retrieve relevant knowledge chunks
-    chunks = await retrieve_chunks(db, user_message, grow, top_k=4)
-    logger.info(
-        "RAG: %d trechos para a conversa %s: %s",
-        len(chunks), conversation.id, ", ".join(c.source_file for c in chunks) or "nenhum",
-    )
-    rag_context = "\n\n---\n\n".join(c.content for c in chunks)
+        # Contexto focado: planta específica (com grow vinculado) ou grow selecionado
+        plant_ctx = ""
+        grow_ctx = ""
+        with chat_sources.scope("focus"):
+            if plant:
+                plant_grow: Grow | None = None
+                if plant.grow_id:
+                    plant_grow = await db.get(Grow, plant.grow_id)
+                plant_ctx = await build_plant_context(db, plant, plant_grow)
+            elif grow:
+                grow_ctx = await build_grow_context(db, grow)
+
+        # Retrieve relevant knowledge chunks
+        chunks = await retrieve_chunks(db, user_message, grow, top_k=4)
+        logger.info(
+            "RAG: %d trechos: %s", len(chunks), ", ".join(c.source_file for c in chunks) or "nenhum",
+        )
+        for chunk in chunks:
+            chat_sources.note_knowledge(chunk)
+        rag_context = "\n\n---\n\n".join(c.content for c in chunks)
+
+        images = [img for img in (images or []) if img.startswith("data:image/")][:4]
+        keys = list(image_keys or [None] * len(images))[: len(images)]
+        for index, key in enumerate(keys):
+            chat_sources.note_photo(key, index)
 
     memories = (
         await db.execute(
             select(BobMemory.content)
-            .where(BobMemory.user_id == conversation.user_id)
+            .where(BobMemory.user_id == user_id)
             .order_by(BobMemory.created_at.asc())
         )
     ).scalars().all()
@@ -162,48 +190,90 @@ async def chat(
     )
 
     # Build message history (last 6 messages to save tokens)
-    history = conversation.messages[-6:] if conversation.messages else []
-    lc_messages: list = [SystemMessage(content=system_prompt)]
-    for msg in history:
+    base: list = [SystemMessage(content=system_prompt)]
+    for msg in (history or [])[-6:]:
         if msg["role"] == "assistant":
-            lc_messages.append(AIMessage(content=msg["content"]))
+            base.append(AIMessage(content=msg["content"]))
         else:
-            lc_messages.append(HumanMessage(content=msg["content"]))
+            base.append(HumanMessage(content=msg["content"]))
 
-    # Last human message — multimodal if images were sent
-    images = [img for img in (images or []) if img.startswith("data:image/")][:4]
-    _, llm, _ = await get_ai_context(db)
-
+    text_only = [*base, HumanMessage(content=user_message)]
     if images:
         content_blocks: list[dict] = [{"type": "text", "text": user_message}]
         for data_uri in images:
             content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
-        lc_messages.append(HumanMessage(content=content_blocks))
-        try:
-            response = await llm.ainvoke(lc_messages)
-            return response.content
-        except Exception as vision_err:
-            logger.warning(
-                "Falha ao processar imagens com o LLM configurado (%s). "
-                "Retentando sem imagens.", vision_err
-            )
-            # Fallback: remove o bloco multimodal e tenta só com texto
-            lc_messages[-1] = HumanMessage(content=user_message)
-            try:
-                response = await llm.ainvoke(lc_messages)
-                return (
-                    response.content
-                    + "\n\n_(Obs.: não consegui analisar as imagens — o modelo de IA configurado "
-                    "pode não ter suporte a visão. Peça ao administrador para configurar "
-                    "Gemini 1.5 Flash ou Claude no painel de IA.)_"
-                )
-            except Exception as text_err:
-                logger.error("Falha total no chat, inclusive sem imagens: %s", text_err)
-                raise
+        lc_messages = [*base, HumanMessage(content=content_blocks)]
     else:
-        lc_messages.append(HumanMessage(content=user_message))
-        response = await llm.ainvoke(lc_messages)
+        lc_messages = text_only
+    return PreparedChat(
+        lc_messages=lc_messages, text_only_messages=text_only, sources=collector.items,
+        record_count=collector.record_count, has_images=bool(images),
+    )
+
+
+VISION_FALLBACK_NOTE = (
+    "\n\n_(Obs.: não consegui analisar as imagens — o modelo de IA configurado "
+    "pode não ter suporte a visão. Peça ao administrador para configurar "
+    "Gemini 1.5 Flash ou Claude no painel de IA.)_"
+)
+
+
+async def run_chat(db: AsyncSession, prepared: PreparedChat) -> str:
+    _, llm, _ = await get_ai_context(db)
+    if not prepared.has_images:
+        response = await llm.ainvoke(prepared.lc_messages)
         return response.content
+    try:
+        response = await llm.ainvoke(prepared.lc_messages)
+        return response.content
+    except Exception as vision_err:
+        logger.warning(
+            "Falha ao processar imagens com o LLM configurado (%s). "
+            "Retentando sem imagens.", vision_err
+        )
+        # Fallback: remove o bloco multimodal e tenta só com texto
+        try:
+            response = await llm.ainvoke(prepared.text_only_messages)
+            return response.content + VISION_FALLBACK_NOTE
+        except Exception as text_err:
+            logger.error("Falha total no chat, inclusive sem imagens: %s", text_err)
+            raise
+
+
+async def stream_chat(db: AsyncSession, prepared: PreparedChat):
+    """Gera os pedacos de texto da resposta (LLM em streaming), com o mesmo fallback de visao."""
+    _, llm, _ = await get_ai_context(db)
+    sent = False
+    try:
+        async for chunk in llm.astream(prepared.lc_messages):
+            piece = getattr(chunk, "content", chunk)
+            if isinstance(piece, list):  # alguns provedores devolvem blocos
+                piece = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in piece)
+            if piece:
+                sent = True
+                yield piece
+    except Exception as err:
+        if not prepared.has_images or sent:
+            raise
+        logger.warning("Streaming com imagens falhou (%s). Retentando sem imagens.", err)
+        async for chunk in llm.astream(prepared.text_only_messages):
+            piece = getattr(chunk, "content", chunk)
+            if piece:
+                yield piece
+        yield VISION_FALLBACK_NOTE
+
+
+async def chat(
+    db: AsyncSession,
+    conversation: AIConversation,
+    user_message: str,
+    grow: Grow | None = None,
+    plant: Plant | None = None,
+    images: list[str] | None = None,
+) -> str:
+    """Compatibilidade: resposta inteira, sem fontes (use prepare_chat + run_chat para ter as fontes)."""
+    prepared = await prepare_chat(db, conversation.user_id, conversation.messages or [], user_message, grow, plant, images)
+    return await run_chat(db, prepared)
 
 
 # ─── Dicas contextuais do Bob ────────────────────────────────────────────────
