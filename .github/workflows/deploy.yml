@@ -1,0 +1,95 @@
+# Deploy automático do backend no Coolify.
+#
+# A cada push na master: aplica todas as migrações num PostgreSQL vazio
+# (mesma imagem da produção), roda os testes e, só se os dois passarem,
+# chama a Deploy webhook do Coolify. O start.sh roda `alembic upgrade head`
+# no deploy, então uma migração quebrada derrubaria a API em produção.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   COOLIFY_TOKEN       API token do Coolify com permissão "deploy"
+#   COOLIFY_DEPLOY_URL  Deploy webhook do app (aba Webhooks no Coolify)
+# O repositório é público e os logs do Actions também: a URL fica em secret
+# para o endereço do painel não aparecer no log.
+#
+# Para desligar: Actions → "Deploy" → ⋯ → Disable workflow.
+# Ver analise-2026-10-16/DEVOPS.md.
+
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Pushes seguidos: o run anterior é cancelado e só o último commit vai ao ar.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: letsgrow
+          POSTGRES_PASSWORD: letsgrow
+          POSTGRES_DB: letsgrow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U letsgrow -d letsgrow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://letsgrow:letsgrow@localhost:5432/letsgrow
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # aiosqlite só é usado pelos testes (AsyncSession em SQLite).
+      - name: Instalar dependências
+        run: pip install -r requirements.txt aiosqlite
+
+      - name: Migrações num PostgreSQL vazio
+        run: alembic upgrade head
+
+      - name: Testes
+        run: python -m unittest discover -s tests
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Disparar deploy no Coolify
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_DEPLOY_URL: ${{ secrets.COOLIFY_DEPLOY_URL }}
+        run: |
+          if [ -z "$COOLIFY_TOKEN" ] || [ -z "$COOLIFY_DEPLOY_URL" ]; then
+            echo "::error::Faltam os secrets COOLIFY_TOKEN e/ou COOLIFY_DEPLOY_URL."
+            exit 1
+          fi
+          # Só a mensagem vai para o log (público); o corpo inteiro só em erro.
+          if ! curl --silent --show-error --fail-with-body --max-time 60 \
+            -H "Authorization: Bearer $COOLIFY_TOKEN" \
+            -o response.json "$COOLIFY_DEPLOY_URL"; then
+            cat response.json
+            exit 1
+          fi
+          jq -r '.deployments[]?.message // .message // "Deploy solicitado."' response.json 2>/dev/null \
+            || echo "Deploy solicitado."
