@@ -19,7 +19,9 @@ from app.models.credits import CreditQuote
 from app.models.environment_reading import EnvironmentReading
 from app.models.event import GrowEvent
 from app.models.knowledge import AIConversation
+from app.models.plan_config import PlanConfig
 from app.models.user import User
+from app.services import plan_config_service
 
 run = sem.run
 
@@ -83,6 +85,15 @@ class ChatBase(sem.Base_):
                                           observed_at=self.now - timedelta(hours=2), temperature_c=24.0, humidity_rh=55)
         self.session.add_all([self.event, self.foreign_event, self.reading])
         self.session.commit()
+        # Limite explicito: o padrao vem do ambiente (FREE_AI_QUERIES_PER_MONTH, 1 sem .env).
+        self.set_query_limit(20)
+
+    def set_query_limit(self, limit):
+        run(plan_config_service.get_all_plan_configs(self.db))
+        self.session.scalars(select(PlanConfig).where(PlanConfig.plan_key == "free")).one().ai_queries_per_month = limit
+        self.session.commit()
+        plan_config_service._invalidate()
+        run(plan_config_service.get_all_plan_configs(self.db))
 
     def chat(self, **body):
         response = self.client.post("/ai/chat", json={"message": "Como está a Aurora?", **body})
@@ -178,6 +189,14 @@ class RegenerateTests(ChatBase):
         self.assertEqual(self.client.post(f"/ai/chat/{data['message_id']}/regenerate").status_code, 409)
         self.current = self.other
         self.assertEqual(self.client.post(f"/ai/chat/{data['message_id']}/regenerate").status_code, 404)
+
+    def test_regenerate_counts_against_monthly_limit(self):
+        self.set_query_limit(1)
+        data = self.chat()
+        blocked = self.client.post(f"/ai/chat/{data['message_id']}/regenerate")
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(self.stored(data["conversation_id"])[-1]["id"], data["message_id"])
+        self.assertEqual(self.queries(), 1)
 
     def test_base64_photo_question_cannot_be_regenerated(self):
         data = self.chat(images=["data:image/png;base64,AA=="])
