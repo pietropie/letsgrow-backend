@@ -84,11 +84,15 @@ jobs:
             echo "::error::Faltam os secrets COOLIFY_TOKEN e/ou COOLIFY_DEPLOY_URL."
             exit 1
           fi
-          # Só a mensagem vai para o log (público); o corpo inteiro só em erro.
-          if ! curl --silent --show-error --fail-with-body --max-time 60 \
+          # Só a mensagem vai para o log (público). Em erro, o código HTTP e a
+          # mensagem do Coolify viram uma anotação, legível sem login no GitHub.
+          # O Coolify só aceita POST em /api/v1/deploy (GET responde 405).
+          code=$(curl --silent --show-error --max-time 60 -X POST \
             -H "Authorization: Bearer $COOLIFY_TOKEN" \
-            -o response.json "$COOLIFY_DEPLOY_URL"; then
-            cat response.json
+            -o response.json -w '%{http_code}' "$COOLIFY_DEPLOY_URL") || code="000"
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            msg=$(jq -r '.message // empty' response.json 2>/dev/null | head -c 300)
+            echo "::error::Coolify respondeu HTTP $code${msg:+: $msg}"
             exit 1
           fi
           jq -r '.deployments[]?.message // .message // "Deploy solicitado."' response.json 2>/dev/null \
