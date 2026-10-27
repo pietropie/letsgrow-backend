@@ -74,8 +74,10 @@ class Grow(Base, TimestampMixin):
     target_humidity_rh: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # --- Outdoor / greenhouse ---
+    # Local do ambiente (clima do Inicio): coordenada arredondada a 2 casas (~1 km) e nome legivel
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
     sun_exposure: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # full | partial | shade
     rain_protection: Mapped[str | None] = mapped_column(String(20), nullable=True)

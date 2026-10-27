@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime, time
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Constantes de enum (documentam os valores aceitos)
@@ -17,8 +17,37 @@ SunExposure = Literal["full", "partial", "shade"]
 RainProtection = Literal["none", "cover", "greenhouse"]
 ExhaustLocation = Literal["copa", "base"]
 
+LOCATION_DECIMALS = 2  # ~1 km: o servidor nunca guarda a coordenada exata (privacidade)
 
-class GrowCreate(BaseModel):
+
+def _round_coordinate(value: float | None) -> float | None:
+    return None if value is None else round(value, LOCATION_DECIMALS)
+
+
+def _clean_label(value: str | None) -> str | None:
+    value = " ".join(value.split()) if value is not None else None
+    return value or None
+
+
+class _LocationFields(BaseModel):
+    """Local do ambiente: localizacao aproximada ou cidade escolhida em /weather/places."""
+
+    lat: float | None = Field(default=None, ge=-90, le=90, description="Arredondada a 2 casas pelo servidor.")
+    lon: float | None = Field(default=None, ge=-180, le=180, description="Arredondada a 2 casas pelo servidor.")
+    location_label: str | None = Field(default=None, max_length=120, description='Nome legivel, ex. "Campinas, SP".')
+
+    round_coordinates = field_validator("lat", "lon")(_round_coordinate)
+    clean_location_label = field_validator("location_label")(_clean_label)
+
+    @model_validator(mode="after")
+    def _coordinates_go_together(self):
+        sent = {"lat", "lon"} & self.model_fields_set
+        if sent and (len(sent) == 1 or (self.lat is None) != (self.lon is None)):
+            raise ValueError("Envie lat e lon juntos (os dois com valor ou os dois null).")
+        return self
+
+
+class GrowCreate(_LocationFields):
     name: str
     grow_type: str = "indoor"
     start_date: date = Field(default_factory=date.today)
@@ -51,8 +80,6 @@ class GrowCreate(BaseModel):
     heater: bool | None = None
     target_temp_c: float | None = None
     target_humidity_rh: float | None = None
-    lat: float | None = None
-    lon: float | None = None
     sun_exposure: str | None = None
     rain_protection: str | None = None
     pot_type: str | None = None
@@ -69,7 +96,7 @@ GrowStatus = Literal["active", "harvested", "abandoned"]
 NON_NULLABLE_ON_UPDATE = frozenset({"name", "grow_type", "status", "has_environment_sensors", "exhaust_power_pct"})
 
 
-class GrowUpdate(BaseModel):
+class GrowUpdate(_LocationFields):
     name: str | None = None
     grow_type: str | None = None
     # abandoned arquiva o ambiente com as plantas ativas; active restaura (mesma regra de
@@ -113,8 +140,6 @@ class GrowUpdate(BaseModel):
     heater: bool | None = None
     target_temp_c: float | None = None
     target_humidity_rh: float | None = None
-    lat: float | None = None
-    lon: float | None = None
     sun_exposure: str | None = None
     rain_protection: str | None = None
     pot_type: str | None = None
@@ -166,6 +191,10 @@ class GrowSummary(BaseModel):
     archived_at: datetime | None = None
     photoperiod_hours: str | None = None
     photoperiod_light_minutes: int | None = None
+    # Local do ambiente: sem lat/lon o Inicio mostra "Defina onde fica" (sem clima)
+    lat: float | None = None
+    lon: float | None = None
+    location_label: str | None = None
     pot_count: int = 0
     active_plant_count: int
     days_running: int
@@ -212,6 +241,7 @@ class GrowResponse(BaseModel):
     target_humidity_rh: float | None
     lat: float | None
     lon: float | None
+    location_label: str | None = None
     sun_exposure: str | None
     rain_protection: str | None
     pot_type: str | None

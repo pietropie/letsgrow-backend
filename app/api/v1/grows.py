@@ -73,6 +73,9 @@ async def list_grows(
                 archived_at=grow.archived_at,
                 photoperiod_hours=grow.photoperiod_hours,
                 photoperiod_light_minutes=grow.photoperiod_light_minutes,
+                lat=grow.lat,
+                lon=grow.lon,
+                location_label=grow.location_label,
                 pot_count=0,
                 active_plant_count=active_count,
                 days_running=(date.today() - grow.start_date).days,
@@ -141,6 +144,9 @@ async def update_grow(
     `grow_type`, `status`, `has_environment_sensors` e `exhaust_power_pct` nao aceitam null (422).
     `fans: []` registra que nao ha ventiladores; `fans: null` volta a "nao informado".
 
+    Local: `lat` e `lon` vao juntos e o servidor arredonda a 2 casas (~1 km). Apagar a
+    coordenada (`lat: null, lon: null`) apaga tambem `location_label`.
+
     `exhaust_power_pct` e so o registro da potencia ajustada no controlador do exaustor:
     nada e enviado ao equipamento. Quando o valor muda, o servidor grava
     `exhaust_power_updated_at` e um registro no historico do ambiente.
@@ -150,6 +156,8 @@ async def update_grow(
     # exclude_unset: null enviado de proposito apaga o campo; campo ausente nao muda.
     changes = body.model_dump(exclude_unset=True)
     new_status = changes.pop("status", None)
+    if "lat" in changes and changes["lat"] is None:
+        changes["location_label"] = None
     # Programacao de luz: duracao em minutos, texto derivado e compatibilidade com "N/M".
     apply_photoperiod(grow, changes)
     for field, value in changes.items():
