@@ -533,6 +533,9 @@ async def rename_conversation(
     conversation = await _own_conversation(db, conversation_id, current_user.id)
     conversation.title = body.title
     await db.commit()
+    # updated_at e gerado pelo banco no UPDATE (onupdate) e fica expirado apos o commit;
+    # le-lo sem refresh faria um lazy load fora do greenlet (MissingGreenlet -> HTTP 500).
+    await db.refresh(conversation)
     return ConversationSummary(
         id=conversation.id, title=conversation.title, grow_id=conversation.grow_id, plant_id=conversation.plant_id,
         created_at=conversation.created_at, updated_at=conversation.updated_at,
