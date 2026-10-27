@@ -266,6 +266,50 @@ async def get_plant_summaries(
     return summaries
 
 
+# ─── Daily Brief ──────────────────────────────────────────────────────────────
+# Rotas fixas ficam antes de /{plant_id}: o FastAPI testa na ordem, e "daily-brief"
+# cairia em /{plant_id} como UUID invalido (HTTP 422).
+
+class DailyBriefResponse(BaseModel):
+    """Briefing diário do Bob — gerado via LLM e cacheado 24h."""
+    title: str
+    body: str
+    urgent_count: int = 0
+    severity: str = "ok"                    # "ok" | "attention" | "urgent"
+    plant_id: str | None = None             # UUID da planta mais relevante
+    plant_name: str | None = None           # nome da strain mais relevante
+    cta_prompt: str = ""                    # pergunta pré-preenchida para abrir o Bob
+    generated_at: str = ""                  # ISO UTC timestamp da geração
+    reason_tags: list[str] = []             # ["rega", "floração", "flush"] (máx 4)
+
+
+@router.get("/daily-brief", response_model=DailyBriefResponse)
+async def get_daily_brief(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Retorna o briefing diário do Bob para o usuário: resumo proativo do que
+    precisa de atenção no cultivo hoje, gerado via LLM e cacheado 24h no Redis.
+
+    O frontend chama este endpoint ao abrir o app (1x por sessão) e exibe
+    um card "Bob hoje" no topo da home screen.
+    """
+    from app.services.daily_brief import generate_daily_brief
+    brief = await generate_daily_brief(db, current_user.id)
+    return DailyBriefResponse(
+        title=brief.title,
+        body=brief.body,
+        urgent_count=brief.urgent_count,
+        severity=brief.severity,
+        plant_id=str(brief.plant_id) if brief.plant_id else None,
+        plant_name=brief.plant_name,
+        cta_prompt=brief.cta_prompt,
+        generated_at=brief.generated_at,
+        reason_tags=brief.reason_tags,
+    )
+
+
 # ---------------------------------------------------------------------------
 # GET /plants/{plant_id}
 # ---------------------------------------------------------------------------
@@ -575,45 +619,3 @@ async def get_bob_tip(
     from app.services.rag import generate_plant_tip
     tip = await generate_plant_tip(db, plant=plant, events=events)
     return tip  # None serializa como 204/null no FastAPI com response_model=X|None
-
-
-# ─── Daily Brief ──────────────────────────────────────────────────────────────
-
-class DailyBriefResponse(BaseModel):
-    """Briefing diário do Bob — gerado via LLM e cacheado 24h."""
-    title: str
-    body: str
-    urgent_count: int = 0
-    severity: str = "ok"                    # "ok" | "attention" | "urgent"
-    plant_id: str | None = None             # UUID da planta mais relevante
-    plant_name: str | None = None           # nome da strain mais relevante
-    cta_prompt: str = ""                    # pergunta pré-preenchida para abrir o Bob
-    generated_at: str = ""                  # ISO UTC timestamp da geração
-    reason_tags: list[str] = []             # ["rega", "floração", "flush"] (máx 4)
-
-
-@router.get("/daily-brief", response_model=DailyBriefResponse)
-async def get_daily_brief(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Retorna o briefing diário do Bob para o usuário: resumo proativo do que
-    precisa de atenção no cultivo hoje, gerado via LLM e cacheado 24h no Redis.
-
-    O frontend chama este endpoint ao abrir o app (1x por sessão) e exibe
-    um card "Bob hoje" no topo da home screen.
-    """
-    from app.services.daily_brief import generate_daily_brief
-    brief = await generate_daily_brief(db, current_user.id)
-    return DailyBriefResponse(
-        title=brief.title,
-        body=brief.body,
-        urgent_count=brief.urgent_count,
-        severity=brief.severity,
-        plant_id=str(brief.plant_id) if brief.plant_id else None,
-        plant_name=brief.plant_name,
-        cta_prompt=brief.cta_prompt,
-        generated_at=brief.generated_at,
-        reason_tags=brief.reason_tags,
-    )
