@@ -147,6 +147,7 @@ class ConversationAsyncTests(unittest.TestCase):
 
                     detail = (await client.get(f"/ai/conversations/{first['conversation_id']}")).json()
                     self.assertEqual(len(detail['messages']), 4)
+                    self.assertEqual(detail['messages'][-1]['feedback'], {'rating': 'down', 'reason': 'missing_context'})
             async with sessions() as session:
                 self.assertEqual((await session.get(User, owner)).ai_queries_this_month, 3)
         finally:

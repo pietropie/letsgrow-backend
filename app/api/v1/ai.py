@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.credits import start_paid_task
 from app.database import AsyncSessionLocal, get_db
 from app.models.ai_config import AIConfig
+from app.models.bob import BobFeedback
 from app.models.credits import CreditQuote
 from app.models.event import GrowEvent
 from app.models.grow import Grow
@@ -520,7 +521,27 @@ async def get_conversation(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _own_conversation(db, conversation_id, current_user.id)
+    """Conversa com as mensagens; cada resposta do Bobby traz `feedback` ({rating, reason} ou null)."""
+    conversation = await _own_conversation(db, conversation_id, current_user.id)
+    rows = (
+        await db.execute(
+            select(BobFeedback.message_id, BobFeedback.rating, BobFeedback.reason).where(
+                BobFeedback.user_id == current_user.id,
+                BobFeedback.conversation_id == conversation.id,
+                BobFeedback.message_id.is_not(None),
+            ).order_by(BobFeedback.created_at.asc())
+        )
+    ).all()
+    feedback = {message_id: {"rating": rating, "reason": reason} for message_id, rating, reason in rows}
+    messages = [
+        {**m, "feedback": feedback.get(m.get("id"))} if isinstance(m, dict) and m.get("role") == "assistant" else m
+        for m in (conversation.messages or [])
+    ]
+    return {
+        "id": conversation.id, "user_id": conversation.user_id, "grow_id": conversation.grow_id,
+        "plant_id": conversation.plant_id, "title": conversation.title, "messages": messages,
+        "created_at": conversation.created_at, "updated_at": conversation.updated_at,
+    }
 
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)

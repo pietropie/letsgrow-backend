@@ -377,6 +377,25 @@ class MessageFeedbackTests(ChatBase):
         self.current = self.other
         self.assertEqual(self.client.post("/bob/feedback", json={**target, "rating": "up"}).status_code, 404)
 
+    def test_conversation_returns_current_rating_per_answer(self):
+        first = self.chat()
+        second = self.chat(conversation_id=first["conversation_id"], message="E a luz?")
+        target = {"conversation_id": first["conversation_id"], "message_id": second["message_id"]}
+        self.client.post("/bob/feedback", json={**target, "rating": "up"})
+        self.client.post("/bob/feedback", json={**target, "reason": "missing_context"})
+        self.current = self.other  # avaliacao de outra conta nunca aparece
+        self.client.post("/bob/feedback", json={**target, "rating": "up"})
+        self.current = self.owner
+
+        conversation = self.client.get(f"/ai/conversations/{first['conversation_id']}").json()
+        self.assertEqual(sorted(conversation), ["created_at", "grow_id", "id", "messages", "plant_id", "title",
+                                                "updated_at", "user_id"])
+        by_id = {m["id"]: m for m in conversation["messages"]}
+        self.assertIsNone(by_id[first["message_id"]]["feedback"])
+        self.assertEqual(by_id[second["message_id"]]["feedback"], {"rating": "down", "reason": "missing_context"})
+        self.assertNotIn("feedback", by_id[first["user_message_id"]])
+        self.assertEqual(by_id[second["message_id"]]["content"], "Resposta do Bobby")
+
     def test_free_text_correction_still_works(self):
         response = self.client.post("/bob/feedback", json={"message": "O pH estava errado", "plant_id": str(self.plant.id)})
         self.assertEqual(response.status_code, 201, response.text)
