@@ -36,6 +36,11 @@ services:
       SERVICE_URL_MINIO_9000: /
       MINIO_ROOT_USER: ${SERVICE_USER_MINIO}
       MINIO_ROOT_PASSWORD: ${SERVICE_PASSWORD_MINIO}
+      # Destino do espelho diário das fotos no Cloudflare R2, usado pela
+      # Scheduled Task "mc mirror fotos" (alias "r2" do mc). Formato:
+      # https://<access_key>:<secret_key>@<account_id>.r2.cloudflarestorage.com
+      # O valor fica só no Coolify. Sem ele, a tarefa falha (alias r2 ausente).
+      MC_HOST_r2: ${MEDIA_BACKUP_R2_URL:-}
     volumes:
       - minio_data:/data
     healthcheck:
