@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.event import GrowEvent
 from app.models.plant import Plant
+from app.rag.prompts import TOPIC_LIMITS
 from app.services import ai_provider
 from app.services.bob_accountability import upsert_actionable_recommendations
 from app.services.bob_env import load_latest_env
@@ -203,7 +204,9 @@ Gere um briefing diário CURTÍSSIMO (2-3 frases) para o cultivador.
 - Se há algo crítico, seja direto: "HOJE você precisa..." — sem rodeios
 - Explique brevemente o motivo em linguagem simples
 - Tom WhatsApp: sem lista, sem formalidade, máx 50 palavras
-- Termine com pergunta ou convite à ação"""
+- Termine com pergunta ou convite à ação
+
+""" + TOPIC_LIMITS
 
 _TIER_PREFIX: dict[str, str] = {
     "critical": "🔴",
