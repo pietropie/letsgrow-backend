@@ -90,6 +90,49 @@ Se o fósforo disponível no solo passar de 80 PPM, a micorriza não se forma.
 """
 
 
+PHARMACOLOGY_DOC = """## Canabinoides
+
+Calor acelera a conversão THCA → THC. O THC age como agonista parcial do CB-1.
+Interagem com o sistema endocanabinoide no chamado **efeito entourage**.
+Autoflores eliminam a dependência do fotoperíodo.
+Fertilizantes sintéticos criam dependência de insumos externos.
+
+## Perfil de Segurança do THC
+
+### Riscos Reais (não exagerados nem minimizados)
+
+1. **Dependência:** 9% dos usuários cumulativos.
+3. **Psicose:** pode exacerbar quadros psicóticos.
+
+## Absorção
+
+- Via oral: pico em 1-4h.
+
+## Fontes
+
+- [[sources/iversen-science-of-marijuana-2000]]
+"""
+
+ORPHAN_DOC = """## Afirmações
+
+- **Decarboxilação no consumo.** O cannabis cru não produz efeito psicoativo. (Cap. 1, p. 16)
+- **THC:CBD** depende da latitude. (Cap. 1, p. 10)
+
+**Riscos do uso:**
+- Psicose em usuários pesados.
+- Dependência em 9% dos usuários de cannabis.
+
+## Efeitos no corpo
+
+- Efeito sedativo e relaxante.
+
+## Secagem
+
+**Etapas:**
+- Secar por 7 dias.
+"""
+
+
 class SanitizeTests(unittest.TestCase):
     def test_strain_keeps_cultivation_and_drops_sale_effects_and_extraction(self):
         clean = cp.sanitize_markdown(_strip_frontmatter(STRAIN_DOC))
@@ -113,6 +156,36 @@ class SanitizeTests(unittest.TestCase):
         self.assertIn("| Leitosos | ✅ Colher |", clean)
         self.assertIn("| Âmbar (>50%) | THC → CBN |", clean)
 
+    def test_pharmacology_and_use_risks_leave_cultivation_stays(self):
+        clean = cp.sanitize_markdown(PHARMACOLOGY_DOC)
+        for gone in ("Perfil de Segurança", "Riscos Reais", "Psicose", "usuários cumulativos", "CB-1", "endocanabinoide",
+                     "via oral", "efeito entourage", "iversen"):
+            self.assertNotIn(gone.lower(), clean.lower(), gone)
+        self.assertIn("Calor acelera a conversão THCA → THC.", clean)
+        self.assertIn("Autoflores eliminam a dependência do fotoperíodo.", clean)  # dependência do cultivo
+        self.assertIn("criam dependência de insumos externos", clean)
+        self.assertFalse(cp.is_blocked_text(clean))
+        self.assertEqual(cp.sanitize_markdown(clean), clean)
+
+    def test_cut_leaves_no_orphans(self):
+        clean = cp.sanitize_markdown(ORPHAN_DOC)
+        self.assertNotIn("(Cap. 1, p. 16)", clean)  # a referência da frase que saiu
+        self.assertNotIn("**Riscos do uso:**", clean)  # rótulo cuja lista saiu inteira
+        self.assertNotIn("## Efeitos no corpo", clean)  # título que ficou sem conteúdo
+        self.assertTrue(all(line.count("**") % 2 == 0 for line in clean.splitlines()))  # sem negrito aberto
+        self.assertIn("- **THC:CBD** depende da latitude. (Cap. 1, p. 10)", clean)
+        self.assertIn("**Etapas:**\n- Secar por 7 dias.", clean)  # rótulo com itens fica
+        self.assertIn("## Secagem", clean)
+        self.assertEqual(cp.sanitize_markdown(clean), clean)
+
+    def test_frontmatter_strip_keeps_body_separators(self):
+        doc = "---\ntitle: X\n---\n\n## A\n\ntexto a\n\n---\n\n## Perfil de Segurança do THC\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+        body = _strip_frontmatter(doc)
+        self.assertTrue(body.startswith("## A"))
+        self.assertIn("## Perfil de Segurança do THC", body)  # antes o regex comia do "---" até o "|---|"
+        self.assertNotIn("Perfil de Segurança", cp.sanitize_markdown(body))
+        self.assertEqual(_strip_frontmatter("## Sem frontmatter\n\n---\n\ntexto\n---\n"), "## Sem frontmatter\n\n---\n\ntexto\n---\n")
+
     def test_summary_text_and_tags(self):
         self.assertEqual(cp.sanitize_text("AK-47 é um híbrido. Disponível na NetSeeds. Floração curta."),
                          "AK-47 é um híbrido. Floração curta.")
@@ -123,7 +196,8 @@ class SanitizeTests(unittest.TestCase):
     def test_blocked_paths_never_index(self):
         for path in ("markets/lojas-sementes-brasil.md", "extractions/rosin.md", "sources/netseeds-2026-04.md",
                      "sources/flora-urbana-2026-04.md", "sources/seeds-genetics-brazil-2026-04.md",
-                     "concepts/mapa-dores-grower.md", "concepts/personas-usuario.md", "concepts/seguranca-juridica-hc.md"):
+                     "concepts/mapa-dores-grower.md", "concepts/personas-usuario.md", "concepts/seguranca-juridica-hc.md",
+                     "sources/iversen-science-of-marijuana-2000.md"):
             self.assertFalse(should_index(path), path)
         self.assertTrue(should_index("strains/ak-47.md"))
         self.assertTrue(should_index("sources/mr-canucks-grow-playlist-2026-04.md"))
@@ -138,7 +212,8 @@ class SanitizeTests(unittest.TestCase):
             clean = cp.sanitize_markdown(_strip_frontmatter(md.read_text(encoding="utf-8")))
             self.assertFalse(cp.is_blocked_text(clean), rel)
             for term in ("NetSeeds", "Flora Urbana", "Seeds Genetics", "rosin", "Bubble Hash", "Efeitos e Usos",
-                         "## Disponível no Brasil", "Usos medicinais"):
+                         "## Disponível no Brasil", "Usos medicinais", "Riscos Reais", "Psicose", "CB-1",
+                         "Perfil de Segurança do THC", "(Cap. 1, p. 16)"):
                 self.assertNotIn(term.lower(), clean.lower(), f"{rel}: {term}")
             checked += 1
         self.assertGreater(checked, 150)

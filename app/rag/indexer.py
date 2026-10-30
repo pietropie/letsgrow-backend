@@ -63,7 +63,8 @@ def _extract_frontmatter_tags(content: str) -> list[str]:
 
 
 def _strip_frontmatter(content: str) -> str:
-    return re.sub(r"^---.*?---\s*", "", content, flags=re.DOTALL | re.MULTILINE)
+    # Só o bloco do topo: os "---" do corpo (separadores, tabelas) não são frontmatter
+    return re.sub(r"\A﻿?\s*---[ \t]*\n.*?\n---[ \t]*(\n\s*|\Z)", "", content, count=1, flags=re.DOTALL)
 
 
 def _split_by_sections(content: str, min_chars: int = 200) -> list[str]:

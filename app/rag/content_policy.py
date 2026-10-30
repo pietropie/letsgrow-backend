@@ -26,6 +26,8 @@ BLOCKED_PATHS = (
     "concepts/mapa-dores-grower.md",
     "concepts/personas-usuario.md",
     "concepts/seguranca-juridica-hc.md",
+    # Livro de farmacologia: efeitos no corpo, vias de consumo, dependência e uso médico
+    "sources/iversen-science-of-marijuana-",
 )
 
 # Seções cortadas pelo título (com as subseções): disponibilidade/preço nas lojas,
@@ -34,7 +36,8 @@ _BLOCKED_HEADING = re.compile(
     r"dispon[ií]vel no brasil|^disponibilidade$|onde comprar sementes|efeitos? e usos|extra[çc](ão|ões|ao|oes)"
     r"|uso medicinal|usos medicinais|valor terap|medicamentos aprovados|farmacocin|vias de administra"
     r"|sistema endocanabinoide|perfil de seguran[çc]a|desobedi[êe]ncia civil|inqu[ée]ritos cient"
-    r"|paciente medicinal",
+    r"|paciente medicinal|riscos reais|toxicidade|compara[çc][ãa]o com [áa]lcool|receptores canabinoides"
+    r"|endocanabinoides|mecanismo de a[çc][ãa]o",
     re.IGNORECASE,
 )
 
@@ -46,7 +49,7 @@ _BLOCKED_TEXT = re.compile(
         r"\bdispon[ií]ve(l|is) (na|nas|no|nos|em) lojas?\b", r"\bfrete\b", r"\bcupom\b",
         r"cat[áa]logo de lojas", r"comparativo de pre[çc]os", r"lojas? (de sementes|que comercializam)",
         r"\[\[(markets|extractions)/", r"\[\[sources/(netseeds|flora-urbana|seeds-genetics-brazil)",
-        r"\[\[concepts/(mapa-dores-grower|personas-usuario|seguranca-juridica-hc)",
+        r"\[\[concepts/(mapa-dores-grower|personas-usuario|seguranca-juridica-hc)", r"\[\[sources/iversen-",
         # extração e concentrados
         r"\brosin\b", r"bubble[\s-]?hash", r"dry[\s-]?sift", r"\bbho\b", r"\bkief\b", r"\bhaxixe\b",
         r"\bhash\b(?!\s+plant)", r"fresh frozen", r"\bpara extra[çc][ãa]o\b", r"extra[çc][ãa]o por compress",
@@ -57,6 +60,16 @@ _BLOCKED_TEXT = re.compile(
         r"efeitos? (reportados?|sedativ|relaxant|eufóric|euforic|corporal|cerebral|mais corporal|mais cerebral|"
         r"equilibrado|calmante|energ)", r"uso (diurno|noturno|recreativo|adulto|vespertino)",
         r"vias? de (consumo|administra)",
+        # farmacologia e riscos do uso (efeito no corpo, dependência, saúde mental)
+        r"endocanabin", r"\bCB-?[12]\b", r"agonista", r"anandamida", r"11-hidroxi", r"\bdl50\b", r"carcinog",
+        r"overdose (fatal|de thc|de cannabis)", r"psicose", r"psic[óo]tic", r"esquizofren", r"abstin[êe]ncia",
+        # "dependência" do uso, não a do cultivo ("dependência do fotoperíodo", "de insumos")
+        r"depend[êe]ncia (de|à|a|ao|em) (cannabis|maconha|thc|subst[âa]ncias?)", r"desenvolve\w* depend[êe]ncia",
+        r"(causa|gera|risco de|crit[ée]rio de) depend[êe]ncia", r"meia-vida do thc",
+        r"teste de urina", r"\bvia oral\b", r"\binala(do|da|ção|cao|r)\b", r"\d+(-\d+)? baseados",
+        r"usu[áa]rios (de cannabis|pesados|di[áa]rios|cumulativos)", r"mem[óo]ria de curto prazo",
+        r"perfil de efeito", r"efeito entourage", r"(intensidade|dura[çc][ãa]o|qualidade) do efeito",
+        r"cannabis crua",
         # promessas terapêuticas; condições em lista ("dor, ansiedade, insônia"), porque
         # "ansiedade" sozinha também é a do cultivador ("não colher cedo por ansiedade")
         r"usos? medicina", r"\b(dor|ansiedade|ins[ôo]nia|depress[ãa]o)\s*,\s*(dor|ansiedade|ins[ôo]nia|depress[ãa]o|estresse)\b",
@@ -80,6 +93,15 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ\[\*\"“(])")
 _PREFIX = re.compile(r"^[\s>*\-+\d.]*(\*\*[^*]+\*\*\s*:?\s*)?")
 _LABEL_ONLY = re.compile(r"^[\s>*\-+\d.]*(\*\*[^*]+\*\*\s*:?)?\s*:?\s*$")
+# Referência solta que sobra quando a frase saiu: "(Cap. 1, p. 16)", "(Fonte: ...)"
+_CITATION = re.compile(r"\((cap\.|caps?\b|p\.|pp\.|fig\.|tabela|fonte|ver\b|conforme\b)[^)]*\)", re.IGNORECASE)
+# Rótulo que abre uma lista: "**Riscos:**", "Exemplos:"
+_LIST_LABEL = re.compile(r"^[\s>*\-+]*(\*\*[^*]{1,60}:?\*\*|[^.!?|\[]{1,60}):\s*(\*\*)?\s*$")
+
+
+def _has_substance(line: str) -> bool:
+    """Sobrou texto de verdade, não só marcador, rótulo ou referência?"""
+    return len(re.findall(r"[^\W\d_]{2,}", _CITATION.sub("", line))) >= 2
 
 
 def is_blocked_path(rel_path: str) -> bool:
@@ -110,7 +132,39 @@ def _clean_line(line: str) -> str | None:
     if kept[0] is not parts[0]:
         # A primeira frase saiu: mantém o marcador de lista e o rótulo em negrito dela
         cleaned = _PREFIX.match(parts[0]).group(0) + cleaned
-    return None if _LABEL_ONLY.match(cleaned) else cleaned
+    if cleaned.count("**") % 2:
+        cleaned = cleaned.replace("**", "", 1)  # o negrito abria na frase que saiu
+    if _LABEL_ONLY.match(cleaned) or not _has_substance(cleaned):
+        return None
+    return cleaned
+
+
+def _drop_empty_blocks(lines: list[str]) -> list[str]:
+    """Tira o que o corte deixou vazio: título sem conteúdo até o próximo título do
+    mesmo nível (ou acima) e rótulo de lista sem itens antes de um título ou do fim."""
+    out: list[str] = []
+    for i, line in enumerate(lines):
+        rest = (later for later in lines[i + 1:] if later.strip())
+        following = next(rest, None)
+        heading = _HEADING.match(line)
+        if heading:
+            level = len(heading.group(1))
+            section_empty = True
+            for later in lines[i + 1:]:
+                later_heading = _HEADING.match(later)
+                if later_heading:
+                    if len(later_heading.group(1)) <= level:
+                        break
+                    continue
+                if later.strip():
+                    section_empty = False
+                    break
+            if section_empty:
+                continue
+        elif _LIST_LABEL.match(line) and (following is None or _HEADING.match(following)):
+            continue
+        out.append(line)
+    return out
 
 
 def _drop_empty_tables(lines: list[str]) -> list[str]:
@@ -150,7 +204,7 @@ def sanitize_markdown(text: str) -> str:
         cleaned = _clean_line(line)
         if cleaned is not None:
             out.append(cleaned)
-    result = "\n".join(_drop_empty_tables(out))
+    result = "\n".join(_drop_empty_blocks(_drop_empty_tables(out)))
     return re.sub(r"\n{3,}", "\n\n", result).strip()
 
 
