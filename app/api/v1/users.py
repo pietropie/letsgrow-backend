@@ -9,7 +9,8 @@ GET    /users/me/plan            — status do plano atual com limites e consumo
 """
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -35,6 +36,8 @@ router = APIRouter()
 class ProfileUpdateIn(BaseModel):
     full_name: str | None = Field(default=None, max_length=120)
     username: str | None = Field(default=None, min_length=3, max_length=50)
+    # Confirmação de 18+ de quem se cadastrou antes dela existir; só aceita true
+    age_confirmed: Literal[True] | None = None
 
 
 class ChangePasswordIn(BaseModel):
@@ -104,6 +107,9 @@ async def update_profile(
 
     if body.full_name is not None:
         current_user.full_name = body.full_name.strip() or None
+
+    if body.age_confirmed and current_user.age_confirmed_at is None:
+        current_user.age_confirmed_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(current_user)

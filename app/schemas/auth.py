@@ -1,7 +1,13 @@
 import uuid
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, field_validator
+
+# "Tenho 18 anos ou mais e vou usar o app de acordo com a lei do meu pais." Opcional para
+# os apps antigos; quando vem, so aceita true. O servidor grava User.age_confirmed_at.
+AgeConfirmation = Literal[True]
 
 
 class RegisterRequest(BaseModel):
@@ -9,6 +15,7 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     full_name: str | None = None
+    age_confirmed: AgeConfirmation | None = None
 
     @field_validator("username")
     @classmethod
@@ -58,6 +65,7 @@ class RefreshRequest(BaseModel):
 
 class OAuthGoogleRequest(BaseModel):
     id_token: str
+    age_confirmed: AgeConfirmation | None = None
 
 
 class UserResponse(BaseModel):
@@ -71,6 +79,7 @@ class UserResponse(BaseModel):
     is_active: bool
     is_verified: bool
     is_dev_mode: bool
+    age_confirmed_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

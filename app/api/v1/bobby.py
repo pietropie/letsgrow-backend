@@ -42,7 +42,11 @@ def _strip_required(value: str) -> str:
     return value
 
 
-FeedbackReason = Literal["wrong_record", "missing_context", "not_helpful", "other"]
+# "offensive" e a denuncia de conteudo ofensivo ou inadequado exigida pela politica de IA da
+# Google Play; vai para o topo da fila de Suporte no admin.
+FeedbackReason = Literal["wrong_record", "missing_context", "not_helpful", "other", "offensive"]
+# Nome usado no relatorio da loja (PLAYSTORE.md P6); gravado como "offensive"
+_REASON_ALIASES = {"inappropriate": "offensive"}
 
 
 class FeedbackCreate(BaseModel):
@@ -56,9 +60,15 @@ class FeedbackCreate(BaseModel):
     message_id: str | None = Field(default=None, max_length=64)
     rating: Literal["up", "down"] | None = None
     # "Usou um registro errado ou antigo" | "Faltou contexto" | "A resposta nao ajudou" | "Outro motivo"
+    # | "Conteudo ofensivo ou inadequado"
     reason: FeedbackReason | None = None
 
     model_config = {"extra": "forbid"}
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _reason_alias(cls, value):
+        return _REASON_ALIASES.get(value, value) if isinstance(value, str) else value
 
     @field_validator("message")
     @classmethod

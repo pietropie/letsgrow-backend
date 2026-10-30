@@ -1,6 +1,7 @@
 import logging
 import re
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from google.auth.transport import requests as google_requests
@@ -86,6 +87,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         hashed_password=hash_password(body.password),
         full_name=body.full_name,
         is_verified=False,
+        age_confirmed_at=datetime.now(timezone.utc) if body.age_confirmed else None,
     )
     db.add(user)
     await db.commit()
@@ -287,6 +289,9 @@ async def google_login(body: OAuthGoogleRequest, db: AsyncSession = Depends(get_
             is_verified=True,  # Google já verificou o email
         )
         db.add(user)
+
+    if body.age_confirmed and user.age_confirmed_at is None:
+        user.age_confirmed_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(user)

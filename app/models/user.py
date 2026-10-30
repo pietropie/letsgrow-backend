@@ -25,6 +25,8 @@ class User(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_dev_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Quando a pessoa confirmou ter 18 anos ou mais (cadastro, Google ou depois, no perfil)
+    age_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
