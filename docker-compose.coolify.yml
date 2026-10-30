@@ -43,6 +43,10 @@ services:
       MC_HOST_r2: ${MEDIA_BACKUP_R2_URL:-}
     volumes:
       - minio_data:/data
+      # Script do backup das fotos com lixeira. Precisa de "Preserve repository
+      # during deployment" ligado no Coolify (General > Build pipeline) para o
+      # arquivo do repositório existir no servidor.
+      - ./scripts/backup-media.sh:/opt/letsgrow/backup-media.sh:ro
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
