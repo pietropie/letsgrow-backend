@@ -36,22 +36,36 @@ services:
       SERVICE_URL_MINIO_9000: /
       MINIO_ROOT_USER: ${SERVICE_USER_MINIO}
       MINIO_ROOT_PASSWORD: ${SERVICE_PASSWORD_MINIO}
-      # Destino do espelho diário das fotos no Cloudflare R2, usado pela
-      # Scheduled Task "mc mirror fotos" (alias "r2" do mc). Formato:
-      # https://<access_key>:<secret_key>@<account_id>.r2.cloudflarestorage.com
-      # O valor fica só no Coolify. Sem ele, a tarefa falha (alias r2 ausente).
+      # Usado pela versão antiga da Scheduled Task "mc mirror fotos", que roda
+      # aqui. Sai quando a tarefa passar para o media-backup.
       MC_HOST_r2: ${MEDIA_BACKUP_R2_URL:-}
     volumes:
       - minio_data:/data
-      # Script do backup das fotos com lixeira. Precisa de "Preserve repository
-      # during deployment" ligado no Coolify (General > Build pipeline) para o
-      # arquivo do repositório existir no servidor.
-      - ./scripts/backup-media.sh:/opt/letsgrow/backup-media.sh:ro
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 12
+
+  # Backup das fotos MinIO → Cloudflare R2, com lixeira de 33 dias.
+  # Só espera a Scheduled Task "mc mirror fotos", que roda
+  # bash /opt/letsgrow/backup-media.sh. Ver scripts/backup-media.sh.
+  media-backup:
+    build:
+      context: .
+      dockerfile: scripts/media-backup.Dockerfile
+    restart: unless-stopped
+    environment:
+      MINIO_HOST: minio:9000
+      MINIO_ROOT_USER: ${SERVICE_USER_MINIO}
+      MINIO_ROOT_PASSWORD: ${SERVICE_PASSWORD_MINIO}
+      # Destino no R2 (alias "r2" do mc). Formato:
+      # https://<access_key>:<secret_key>@<account_id>.r2.cloudflarestorage.com
+      # O valor fica só no Coolify. Sem ele, a tarefa falha (alias r2 ausente).
+      MC_HOST_r2: ${MEDIA_BACKUP_R2_URL:-}
+    depends_on:
+      minio:
+        condition: service_healthy
 
   api:
     build: .

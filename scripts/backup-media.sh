@@ -1,8 +1,8 @@
 #!/bin/bash
 # Backup diário das fotos: MinIO ("src") → Cloudflare R2 ("r2"), com lixeira.
 #
-# Roda no container minio pela Scheduled Task "mc mirror fotos" do Coolify
-# (montado em /opt/letsgrow/backup-media.sh pelo docker-compose.coolify.yml).
+# Roda no container media-backup pela Scheduled Task "mc mirror fotos" do
+# Coolify (copiado para /opt/letsgrow/ por scripts/media-backup.Dockerfile).
 # Ver analise-2026-10-16/DEVOPS.md, "Backup das fotos".
 #
 # - Copia para r2/<destino>/<bucket>/ o que é novo ou mudou no MinIO
@@ -24,7 +24,7 @@ BUCKETS="${BACKUP_BUCKETS:-avatars events strain-images}"
 MAX_MOVE_PERCENT=20
 MAX_MOVE_MIN="${MAX_MOVE_MIN:-10}"
 
-export MC_HOST_src="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@localhost:9000"
+export MC_HOST_src="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@${MINIO_HOST:-localhost:9000}"
 
 for b in $BUCKETS; do
   mc mirror --overwrite --quiet "src/$b" "$DEST/$b"
