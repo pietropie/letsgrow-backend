@@ -13,6 +13,7 @@ from app.models.grow import Grow
 from app.models.knowledge import AIConversation, KnowledgeChunk
 from app.models.plant import Plant
 from app.models.sensor import SensorDevice, SensorReading
+from app.rag import content_policy
 from app.rag.prompts import build_customer_context, build_grow_context, build_plant_context, build_system_prompt
 from app.rag.retriever import retrieve_chunks
 from app.services import ai_provider, chat_sources
@@ -165,12 +166,19 @@ async def prepare_chat(
 
         # Retrieve relevant knowledge chunks
         chunks = await retrieve_chunks(db, user_message, grow, top_k=4)
+        # Política da Play também na busca: chunks antigos (ainda não reindexados) e os
+        # aprovados de conversas passam pelo mesmo filtro da indexação.
+        texts = [
+            (chunk, content_policy.sanitize_markdown(chunk.content or ""))
+            for chunk in chunks if not content_policy.is_blocked_path(chunk.source_file or "")
+        ]
+        texts = [(chunk, text) for chunk, text in texts if text]
         logger.info(
-            "RAG: %d trechos: %s", len(chunks), ", ".join(c.source_file for c in chunks) or "nenhum",
+            "RAG: %d trechos: %s", len(texts), ", ".join(c.source_file for c, _ in texts) or "nenhum",
         )
-        for chunk in chunks:
+        for chunk, _ in texts:
             chat_sources.note_knowledge(chunk)
-        rag_context = "\n\n---\n\n".join(c.content for c in chunks)
+        rag_context = "\n\n---\n\n".join(text for _, text in texts)
 
         images = [img for img in (images or []) if img.startswith("data:image/")][:4]
         keys = list(image_keys or [None] * len(images))[: len(images)]

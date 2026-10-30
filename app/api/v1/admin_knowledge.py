@@ -10,6 +10,10 @@ mesmo indexer e o mesmo parser de strains dos scripts locais.
   cada arquivo enviado (idempotente por caminho).
 - POST /admin/knowledge/prune — apaga chunks de arquivos que saíram da wiki.
 - POST /admin/strains/reindex — upsert do catálogo de strains por slug.
+- GET  /admin/knowledge/policy-audit — chunks e strains que ainda ferem a política da
+  Play (lojas, extração, consumo; app/rag/content_policy.py). Vazio = base limpa.
+- POST /admin/knowledge/search — o que a busca do Bobby traria para uma pergunta, com
+  o texto guardado no banco (antes do filtro da busca), para conferir a base.
 
 Chunks user_experience e os extraídos de conversas nunca são apagados.
 Protegidos pelo mesmo X-Admin-Token de app/api/v1/admin.py.
@@ -19,11 +23,16 @@ import posixpath
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.admin import require_admin_token
 from app.database import get_db
+from app.models.knowledge import KnowledgeChunk
+from app.models.strain import Strain
+from app.rag import content_policy
 from app.rag.indexer import index_documents, prune_wiki_chunks, should_index
+from app.rag.retriever import retrieve_chunks
 from app.services.rag import get_ai_context
 from app.services.strain_catalog import upsert_strains
 
@@ -140,3 +149,78 @@ async def reindex_strains(
     ignored = [f.path for f in body.files if not f.path.startswith("strains/")]
     created, updated = await upsert_strains(db, documents)
     return StrainsReindexResponse(created=created, updated=updated, ignored=ignored)
+
+
+class PolicyFinding(BaseModel):
+    kind: str            # chunk | strain
+    id: str
+    source_file: str | None
+    reason: str          # blocked_path | blocked_text
+    excerpt: str
+
+
+class PolicyAuditResponse(BaseModel):
+    chunks_checked: int
+    strains_checked: int
+    findings: list[PolicyFinding]
+
+
+def _excerpt(text: str) -> str:
+    match = content_policy._BLOCKED_TEXT.search(text)
+    if not match:
+        return text[:160]
+    start = max(match.start() - 60, 0)
+    return text[start:match.end() + 60]
+
+
+@router.get("/knowledge/policy-audit", response_model=PolicyAuditResponse)
+async def knowledge_policy_audit(
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Varre todos os chunks ativos e o catálogo de strains atrás de conteúdo fora da política."""
+    findings: list[PolicyFinding] = []
+    chunks = (await db.execute(select(KnowledgeChunk.id, KnowledgeChunk.source_file, KnowledgeChunk.content))).all()
+    for chunk_id, source_file, content in chunks:
+        if content_policy.is_blocked_path(source_file or ""):
+            findings.append(PolicyFinding(kind="chunk", id=str(chunk_id), source_file=source_file,
+                                          reason="blocked_path", excerpt=(content or "")[:160]))
+        elif content and content_policy.is_blocked_text(content):
+            findings.append(PolicyFinding(kind="chunk", id=str(chunk_id), source_file=source_file,
+                                          reason="blocked_text", excerpt=_excerpt(content)))
+    strains = (await db.execute(select(Strain.id, Strain.source_file, Strain.summary, Strain.breeder))).all()
+    for strain_id, source_file, summary, breeder in strains:
+        text = " ".join(t for t in (summary, breeder) if t)
+        if content_policy.is_blocked_text(text):
+            findings.append(PolicyFinding(kind="strain", id=str(strain_id), source_file=source_file,
+                                          reason="blocked_text", excerpt=_excerpt(text)))
+    return PolicyAuditResponse(chunks_checked=len(chunks), strains_checked=len(strains), findings=findings)
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(..., min_length=3, max_length=300)
+    top_k: int = Field(default=6, ge=1, le=10)
+
+
+class KnowledgeSearchHit(BaseModel):
+    source_file: str | None
+    content: str
+    policy_ok: bool      # o texto guardado já está dentro da política
+
+
+@router.post("/knowledge/search", response_model=list[KnowledgeSearchHit])
+async def knowledge_search(
+    body: KnowledgeSearchRequest,
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mesma busca vetorial do chat (embedding ativo em /admin/ia), sem filtro de fase."""
+    chunks = await retrieve_chunks(db, body.query, None, top_k=body.top_k)
+    return [
+        KnowledgeSearchHit(
+            source_file=c.source_file, content=c.content or "",
+            policy_ok=not content_policy.is_blocked_path(c.source_file or "")
+            and not content_policy.is_blocked_text(c.content or ""),
+        )
+        for c in chunks
+    ]

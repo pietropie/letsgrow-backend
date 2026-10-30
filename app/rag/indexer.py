@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_config import AIConfig
 from app.models.knowledge import KnowledgeChunk
+from app.rag.content_policy import is_blocked_path, is_blocked_tag, sanitize_markdown
 from app.services import ai_provider
 
 # Tags from frontmatter that map to phase relevance
@@ -95,11 +96,16 @@ def _infer_phase_relevance(tags: list[str], content: str) -> list[str]:
 # Arquivos da wiki que não entram no RAG: modelos, índices, lint, a nota de
 # boas-vindas do Obsidian e diários pessoais de cultivo (cultivations/ é o
 # grow do dono — não deve aparecer nas respostas do Bobby para outros clientes).
+# Lojas, extração e afins ficam fora pela política da Play (app/rag/content_policy.py).
 _SKIP_PATTERNS = ("templates/", "index.md", "log.md", "lint/", "Brain/", "cultivations/")
 
 
 def should_index(rel_path: str) -> bool:
-    return rel_path.endswith(".md") and not any(skip in rel_path for skip in _SKIP_PATTERNS)
+    return (
+        rel_path.endswith(".md")
+        and not any(skip in rel_path for skip in _SKIP_PATTERNS)
+        and not is_blocked_path(rel_path)
+    )
 
 
 def _wiki_chunks_filter():
@@ -144,13 +150,19 @@ async def index_documents(
         if not should_index(rel):
             continue
 
-        tags = _extract_frontmatter_tags(content)
-        body = _strip_frontmatter(content)
+        tags = [tag for tag in _extract_frontmatter_tags(content) if not is_blocked_tag(tag)]
+        body = sanitize_markdown(_strip_frontmatter(content))
         source_type = _infer_source_type(rel)
         phase_relevance = _infer_phase_relevance(tags, body)
 
-        sections = _split_by_sections(body)
+        # Só títulos sobraram (o filtro tirou o conteúdo): não vale um chunk
+        has_content = re.sub(r"(?m)^#{1,6}\s.*$", "", body).strip()
+        sections = _split_by_sections(body) if has_content else []
         if not sections:
+            # Nada sobrou depois do filtro: os chunks antigos do arquivo também saem
+            await db.execute(
+                delete(KnowledgeChunk).where(KnowledgeChunk.source_file == rel, *_wiki_chunks_filter())
+            )
             continue
 
         # Normaliza a chamada entre provedores (output_dimensionality no Gemini,

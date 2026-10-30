@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.strain import Strain
+from app.rag.content_policy import is_blocked_text, sanitize_text
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SUMMARY_RE = re.compile(r"##\s*Resumo\s*\n+(.*?)(?:\n##\s|\Z)", re.DOTALL)
@@ -133,13 +134,15 @@ def build_strain_kwargs(slug: str, text: str, source_file: str) -> dict | None:
         aliases=fm.get("aliases") or None,
         strain_type=_infer_strain_type(fm),
         genetics=_infer_genetics(fm),
-        breeder=fm.get("breeder"),
+        # Marca própria de loja de sementes ("Seeds Genetics") não aparece como breeder
+        breeder=None if is_blocked_text(fm.get("breeder") or "") else fm.get("breeder"),
         thc_pct=fm.get("thc_pct"),
         cbd_pct=fm.get("cbd_pct"),
         dominant_terpene=fm.get("terpeno_dominante"),
         flowering_days=_parse_int(fm.get("floração_dias")),
         height_cm=fm.get("altura_cm"),
-        summary=_extract_summary(text),
+        # Resumo sem loja, extração ou efeito de consumo (política da Play; app/rag/content_policy.py)
+        summary=sanitize_text(_extract_summary(text)),
         source_file=source_file.replace("\\", "/"),
     )
 
