@@ -145,6 +145,7 @@ class PackageAdminOut(BaseModel):
     validity_days: int | None
     is_active: bool
     sort_order: int
+    google_product_id: str | None
     updated_by: str | None
 
 
@@ -155,6 +156,7 @@ class PackageCreate(BaseModel):
     validity_days: int | None = Field(default=None, ge=1, le=3650)
     is_active: bool = False
     sort_order: int = 0
+    google_product_id: str | None = Field(default=None, min_length=1, max_length=100)
     updated_by: str | None = Field(default=None, max_length=255)
 
     model_config = {"extra": "forbid"}
@@ -167,6 +169,7 @@ class PackagePatch(BaseModel):
     validity_days: int | None = Field(default=None, ge=1, le=3650)
     is_active: bool | None = None
     sort_order: int | None = None
+    google_product_id: str | None = Field(default=None, min_length=1, max_length=100)
     updated_by: str | None = Field(default=None, max_length=255)
 
     model_config = {"extra": "forbid"}
@@ -176,8 +179,17 @@ def _package_out(row: CreditPackage) -> PackageAdminOut:
     return PackageAdminOut(
         id=row.id, label=row.label, credits=row.credits, price_brl=float(row.price_brl),
         validity_days=row.validity_days, is_active=row.is_active, sort_order=row.sort_order,
-        updated_by=row.updated_by,
+        google_product_id=row.google_product_id, updated_by=row.updated_by,
     )
+
+
+async def _ensure_play_product_free(db: AsyncSession, product_id: str | None, package_id: uuid.UUID | None) -> None:
+    if not product_id:
+        return
+    clash = (await db.execute(select(CreditPackage).where(CreditPackage.google_product_id == product_id))).scalar_one_or_none()
+    if clash is not None and clash.id != package_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"O produto do Google Play já está no pacote “{clash.label}”")
 
 
 @router.get("/credits/packages", response_model=list[PackageAdminOut])
@@ -188,6 +200,7 @@ async def admin_list_packages(db: AsyncSession = Depends(get_db)):
 
 @router.post("/credits/packages", response_model=PackageAdminOut, status_code=status.HTTP_201_CREATED)
 async def admin_create_package(body: PackageCreate, db: AsyncSession = Depends(get_db)):
+    await _ensure_play_product_free(db, body.google_product_id, None)
     now = datetime.now(timezone.utc)
     row = CreditPackage(id=uuid.uuid4(), created_at=now, updated_at=now, **body.model_dump())
     db.add(row)
@@ -201,8 +214,9 @@ async def admin_patch_package(package_id: uuid.UUID, body: PackagePatch, db: Asy
     row = await db.get(CreditPackage, package_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pacote não encontrado")
+    await _ensure_play_product_free(db, body.google_product_id, row.id)
     for field, value in body.model_dump(exclude_unset=True).items():
-        if value is None and field != "validity_days":
+        if value is None and field not in ("validity_days", "google_product_id"):
             continue
         setattr(row, field, value)
     row.updated_at = datetime.now(timezone.utc)

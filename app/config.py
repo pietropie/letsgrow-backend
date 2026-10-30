@@ -121,6 +121,26 @@ class Settings(BaseSettings):
     # Precos, pacotes e custos ficam no painel admin, nao aqui.
     PAYMENT_PROVIDER: str = "unconfigured"
 
+    # Pagamentos (analise-2026-10-16/PAGAMENTOS.md). Credenciais so nas variaveis do Coolify.
+    # Mercado Pago (webapp): token TEST-... no sandbox; secret da assinatura dos webhooks.
+    MP_ACCESS_TOKEN: str = ""
+    MP_WEBHOOK_SECRET: str = ""
+    MP_API_URL: str = "https://api.mercadopago.com"
+    # Webapp: a volta do checkout vai para {WEB_APP_URL}/conta/creditos/retorno?purchase_id=
+    # ou /conta/planos/retorno?subscription_id= (base fixa aqui, nunca vinda do cliente)
+    WEB_APP_URL: str = "https://app.letsgrowapp.com.br"
+    # URL publica desta API, usada como notification_url dos checkouts
+    BILLING_PUBLIC_API_URL: str = "https://api.letsgrowapp.com.br/api/v1"
+    # Dias de tolerancia apos a data de renovacao do cartao (MP tenta cobrar de novo)
+    BILLING_GRACE_DAYS: int = 3
+    # Google Play Billing (app Android)
+    GOOGLE_PLAY_PACKAGE_NAME: str = "com.letsgrow.app"
+    # JSON da service account com acesso a Google Play Developer API (conteudo, nao caminho)
+    GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: str = ""
+    # Push do Pub/Sub (RTDN): audience do token OIDC e e-mail da conta que assina o push
+    GOOGLE_PLAY_RTDN_AUDIENCE: str = ""
+    GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT: str = ""
+
     # Copias de dados (LGPD): bucket privado no MinIO e validade do arquivo
     DATA_EXPORT_BUCKET: str = "exports"
     DATA_EXPORT_TTL_DAYS: int = 7

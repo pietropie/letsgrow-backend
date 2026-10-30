@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.app_settings import AppSettings
-from app.models.credits import CREDIT_TASKS, CreditLedgerEntry, CreditQuote, CreditTaskCost
+from app.models.credits import CREDIT_TASKS, CreditLedgerEntry, CreditPurchase, CreditQuote, CreditTaskCost
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -336,6 +336,41 @@ async def debit_adjustment(
             lot_id=lot.id, created_at=now, description=description[:200],
         ))
         needed -= take
+
+
+async def apply_purchase_status(db: AsyncSession, purchase: CreditPurchase, new_status: str) -> None:
+    """Idempotente: so credita na primeira transicao pending -> paid."""
+    if purchase.status != "pending" or new_status not in ("paid", "failed", "canceled"):
+        return
+    now = datetime.now(timezone.utc)
+    purchase.status = new_status
+    purchase.updated_at = now
+    if new_status == "paid":
+        purchase.paid_at = now
+        if purchase.user_id is not None:
+            await grant_lot(
+                db, purchase.user_id, kind="purchase", amount=purchase.credits,
+                description=f"{purchase.credits} créditos adicionais · {purchase.label}",
+                expires_at=now + timedelta(days=purchase.validity_days) if purchase.validity_days else None,
+                purchase_id=purchase.id, now=now,
+            )
+    await db.commit()
+
+
+async def revoke_purchase_lot(
+    db: AsyncSession, user_id: uuid.UUID, purchase_id: uuid.UUID, description: str, now: datetime | None = None,
+) -> int:
+    """Reembolso/chargeback: retira o que sobrou do lote da compra (o ja usado nao volta)."""
+    now = now or datetime.now(timezone.utc)
+    removed = 0
+    for lot, remaining in await _lots(db, user_id):
+        if lot.purchase_id == purchase_id and lot.kind == "purchase" and remaining > 0:
+            db.add(CreditLedgerEntry(
+                id=uuid.uuid4(), user_id=user_id, kind="adjust", bucket=lot.bucket, amount=-remaining,
+                lot_id=lot.id, created_at=now, description=description[:200],
+            ))
+            removed += remaining
+    return removed
 
 
 async def release_stale_reservations(db: AsyncSession, now: datetime | None = None) -> int:

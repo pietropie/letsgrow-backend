@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 _JOB_ID = "daily_push"
 _PERSONAL_JOB_ID = "personal_push"
 _MAINTENANCE_JOB_ID = "account_maintenance"
+_BILLING_JOB_ID = "billing_reconcile"
 
 # Instância global — importada pelo main.py e pelo endpoint admin
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -88,6 +89,20 @@ async def _run_account_maintenance() -> None:
         logger.error("Erro na manutenção de contas: %s", exc, exc_info=True)
 
 
+async def _run_billing_reconcile() -> None:
+    """Pagamentos: confere no provedor o que um webhook perdido deixaria errado."""
+    try:
+        from app.database import AsyncSessionLocal
+        from app.services.billing import reconcile
+
+        async with AsyncSessionLocal() as db:
+            stats = await reconcile(db)
+        if any(stats.values()):
+            logger.info("Reconciliação de pagamentos: %s", stats)
+    except Exception as exc:
+        logger.error("Erro na reconciliação de pagamentos: %s", exc, exc_info=True)
+
+
 def _schedule_job(hour: int, minute: int) -> None:
     """Registra (ou substitui) o job de push diário no scheduler."""
     if scheduler.get_job(_JOB_ID):
@@ -133,6 +148,14 @@ def setup_background_jobs() -> None:
         name="Manutenção de contas (cópias, exclusões, suporte)",
         replace_existing=True,
         misfire_grace_time=600,
+    )
+    scheduler.add_job(
+        _run_billing_reconcile,
+        trigger=CronTrigger(minute=7, timezone="UTC"),
+        id=_BILLING_JOB_ID,
+        name="Reconciliação de pagamentos (Mercado Pago e Google Play)",
+        replace_existing=True,
+        misfire_grace_time=1800,
     )
 
 

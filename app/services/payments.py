@@ -1,10 +1,11 @@
 """
-Interface de provedor de pagamento para a compra de creditos avulsos.
+Interface de provedor de pagamento para a compra de creditos avulsos na web.
 
-Nenhum provedor real esta integrado. O padrao (PAYMENT_PROVIDER=unconfigured)
-recusa a compra com PaymentUnavailable, e o app mostra "Compra ainda nao
-disponivel". Para integrar um provedor, implemente PaymentProvider (checkout +
-validacao do webhook com a assinatura do provedor) e registre em _PROVIDERS.
+O padrao (PAYMENT_PROVIDER=unconfigured) recusa a compra com PaymentUnavailable, e o
+app mostra "Compra ainda nao disponivel". Com PAYMENT_PROVIDER=mercadopago, a compra
+abre o Checkout Pro (Pix ou cartao). As notificacoes do Mercado Pago chegam todas em
+/billing/webhooks/mercadopago (services/billing.py), inclusive as de creditos.
+No Android a compra e pelo Google Play (POST /billing/google/verify), nunca por aqui.
 """
 from __future__ import annotations
 
@@ -57,7 +58,33 @@ class UnconfiguredProvider:
         raise InvalidWebhook("Nenhum provedor de pagamento configurado")
 
 
-_PROVIDERS: dict[str, type] = {"unconfigured": UnconfiguredProvider}
+class MercadoPagoProvider:
+    name = "mercadopago"
+
+    async def create_checkout(self, purchase: CreditPurchase, user: User) -> CheckoutSession:
+        from app.services import mercadopago as mp
+
+        if not mp.is_configured():
+            raise PaymentUnavailable("Compra ainda não disponível")
+        reference = f"credits:{purchase.id}"
+        try:
+            data = await mp.create_preference(
+                external_reference=reference, title=f"LetsGrow · {purchase.label}",
+                amount=float(purchase.price_brl), payer_email=user.email, kind="credits",
+                ref_id=str(purchase.id), pix_only=False,
+            )
+        except mp.MercadoPagoError:
+            raise PaymentUnavailable("Não foi possível iniciar o pagamento. Tente de novo.")
+        url = data.get("init_point")
+        if settings.MP_ACCESS_TOKEN.startswith("TEST-") and data.get("sandbox_init_point"):
+            url = data["sandbox_init_point"]
+        return CheckoutSession(provider_ref=reference, checkout_url=url)
+
+    async def parse_webhook(self, body: bytes, headers: dict[str, str]) -> WebhookEvent:
+        raise InvalidWebhook("Notificações do Mercado Pago chegam em /billing/webhooks/mercadopago")
+
+
+_PROVIDERS: dict[str, type] = {"unconfigured": UnconfiguredProvider, "mercadopago": MercadoPagoProvider}
 
 
 def get_payment_provider() -> PaymentProvider:

@@ -23,3 +23,15 @@ O ambiente `.venv-test` precisou de `aiosqlite`, `alembic`, `apscheduler`, `rese
 `test_plant_phase.py` (QA 2026-10-18) cobre a fase pelos registros FASE (germinação, muda, vega, flip a partir de qualquer fase anterior, colheita), a regra de não voltar a fase com registro antigo, a correção manual pelo PATCH, o registro múltiplo (`POST /diary`) e a data da próxima renovação da cota do Bobby. `test_sem_api.py` passou a checar `GET /account/deletion-policy`. Total atual: 69 testes.
 
 `test_grow_exhaust_power.py` cobre a potência do exaustor registrada no ambiente: 0–100 em passos de 5, só o dono, registro no histórico só quando o valor muda ("registrada como" na primeira vez, "ajustada para" depois), `exhaust_power_updated_at` gravado pelo servidor e devolvido pelo `GET /grows/{id}`, e o registro no contexto do Bobby. Total atual: 74 testes.
+
+`test_billing.py` (pagamentos) cobre, com o Mercado Pago e o Google Play simulados:
+- nada à venda sem preço ativo no admin; IDs do Play duplicados recusados;
+- assinatura no cartão liberada só após a 1ª cobrança; webhook com `x-signature` inválida recusado; evento repetido processado uma vez;
+- upgrade (cancela a anterior), downgrade e troca de período no fim do período, cancelamento mantendo o período pago;
+- Pix como período avulso (valor abaixo do preço não libera) e reembolso;
+- chargeback na cobrança do cartão; plano manual do admin preservado;
+- reconciliação (checkout abandonado, pagamento perdido);
+- créditos na web com reembolso;
+- Google Play: verificação, acknowledge, compra de outra conta, produto desconhecido, troca com `linkedPurchaseToken`, RTDN autenticada e idempotente, revogação, `on_hold`, consumo de créditos e reembolso anulado.
+
+Total atual: 195 testes.

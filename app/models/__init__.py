@@ -2,6 +2,7 @@ from app.models.account import AccountDeletionRequest, DataExportRequest, Suppor
 from app.models.ai_config import AIConfig
 from app.models.app_settings import AppSettings
 from app.models.base import Base
+from app.models.billing import PaymentEvent, PlanPrice, Subscription
 from app.models.bob import BobAnomaly, BobFeedback, BobMemory, BobRecommendation
 from app.models.credits import CreditLedgerEntry, CreditPackage, CreditPurchase, CreditQuote, CreditTaskCost
 from app.models.environment_reading import EnvironmentReading
@@ -47,4 +48,7 @@ __all__ = [
     "DataExportRequest",
     "AccountDeletionRequest",
     "SupportMessage",
+    "PlanPrice",
+    "Subscription",
+    "PaymentEvent",
 ]

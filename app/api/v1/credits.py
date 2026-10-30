@@ -5,7 +5,7 @@ GET  /credits/balance               – saldo (plano + extras) e renovacao
 GET  /credits/ledger                – historico (tarefas, concessoes, compras, expiracoes, ajustes)
 GET  /credits/packages              – pacotes avulsos ativos (cadastrados no admin)
 POST /credits/quote                 – custo antes da tarefa ("Antes de comecar")
-POST /credits/purchases             – inicia compra (503 enquanto nao houver provedor)
+POST /credits/purchases             – inicia compra na web (503 enquanto nao houver provedor)
 GET  /credits/purchases/{id}        – estado da compra
 POST /credits/webhooks/{provider}   – confirmacao do provedor de pagamento
 """
@@ -26,7 +26,7 @@ from app.models.plant import Plant
 from app.models.user import User
 from app.services.app_settings import get_app_settings
 from app.services.auth import get_current_user
-from app.services.credits import CreditError, create_quote, grant_lot, refresh_balance
+from app.services.credits import CreditError, apply_purchase_status, create_quote, refresh_balance
 from app.services.payments import InvalidWebhook, PaymentUnavailable, get_payment_provider
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,8 @@ class PackageOut(BaseModel):
     credits: int
     price_brl: float
     validity_days: int | None
+    # Android: produto consumivel no Play Console (null = nao vendido no Android)
+    google_product_id: str | None = None
 
 
 class QuoteIn(BaseModel):
@@ -187,7 +189,8 @@ async def list_packages(
         )
     ).scalars().all()
     return [
-        PackageOut(id=p.id, label=p.label, credits=p.credits, price_brl=float(p.price_brl), validity_days=p.validity_days)
+        PackageOut(id=p.id, label=p.label, credits=p.credits, price_brl=float(p.price_brl),
+                   validity_days=p.validity_days, google_product_id=p.google_product_id)
         for p in rows
     ]
 
@@ -282,25 +285,6 @@ async def get_purchase(
     if purchase is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Compra não encontrada")
     return _purchase_out(purchase)
-
-
-async def apply_purchase_status(db: AsyncSession, purchase: CreditPurchase, new_status: str) -> None:
-    """Idempotente: so credita na primeira transicao pending -> paid."""
-    if purchase.status != "pending" or new_status not in ("paid", "failed", "canceled"):
-        return
-    now = datetime.now(timezone.utc)
-    purchase.status = new_status
-    purchase.updated_at = now
-    if new_status == "paid":
-        purchase.paid_at = now
-        if purchase.user_id is not None:
-            await grant_lot(
-                db, purchase.user_id, kind="purchase", amount=purchase.credits,
-                description=f"{purchase.credits} créditos adicionais · {purchase.label}",
-                expires_at=now + timedelta(days=purchase.validity_days) if purchase.validity_days else None,
-                purchase_id=purchase.id, now=now,
-            )
-    await db.commit()
 
 
 @router.post("/webhooks/{provider_name}", status_code=status.HTTP_204_NO_CONTENT)

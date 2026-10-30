@@ -47,6 +47,8 @@ class CreditPackage(Base, TimestampMixin):
     validity_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Produto consumivel no Play Console (compra no Android); null = nao vendido no Android
+    google_product_id: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)
     updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
@@ -86,9 +88,10 @@ class CreditPurchase(Base, TimestampMixin):
     price_brl: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     validity_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     provider: Mapped[str] = mapped_column(String(30), nullable=False)
-    provider_ref: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    # MP: "credits:<id>" (external_reference); Play: purchaseToken
+    provider_ref: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     checkout_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    # pending | paid | failed | canceled
+    # pending | paid | failed | canceled | refunded | charged_back
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
