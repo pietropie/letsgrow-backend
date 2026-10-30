@@ -326,9 +326,14 @@ class AgeConfirmationTests(unittest.TestCase):
         self.assertEqual(verify.call_count, 3)
 
     def test_existing_account_confirms_in_profile(self):
+        before = self.client.get("/users/me")
+        self.assertEqual(before.status_code, 200, before.text)
+        self.assertIsNone(before.json()["age_confirmed_at"])  # o app pede a confirmação
         response = self.client.patch("/users/me", json={"age_confirmed": True})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIsNotNone(response.json()["age_confirmed_at"])
+        self.assertIsNotNone(self.client.get("/users/me").json()["age_confirmed_at"])
+        self.assertEqual(self.client.get("/auth/me").json(), self.client.get("/users/me").json())
         self.assertEqual(self.client.patch("/users/me", json={"age_confirmed": False}).status_code, 422)
 
 

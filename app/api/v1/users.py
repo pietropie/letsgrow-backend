@@ -77,6 +77,15 @@ class PlanStatusResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# GET /users/me — mesmo perfil de /auth/me (o app lê daqui, ex.: age_confirmed_at)
+# ---------------------------------------------------------------------------
+
+@router.get("/me", response_model=UserResponse)
+async def get_profile(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+# ---------------------------------------------------------------------------
 # PATCH /users/me
 # ---------------------------------------------------------------------------
 
