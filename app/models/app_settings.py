@@ -7,7 +7,7 @@ padroes neutros (creditos desligados, carencia 7 dias, previa "full").
 """
 import uuid
 
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import Boolean, Float, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +21,7 @@ DEFAULT_APP_SETTINGS = {
     "support_inbox_email": None,
     "notification_default_preview": "full",
     "notification_default_frequency": "daily",
+    "usage_warning_threshold": 0.8,
 }
 
 
@@ -37,4 +38,6 @@ class AppSettings(Base, TimestampMixin):
     notification_default_preview: Mapped[str] = mapped_column(String(10), nullable=False, default="full")
     # daily | in_app
     notification_default_frequency: Mapped[str] = mapped_column(String(10), nullable=False, default="daily")
+    # Fração do uso a partir da qual GET /usage marca near_limit (o Início avisa)
+    usage_warning_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.8)
     updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)

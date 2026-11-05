@@ -31,6 +31,7 @@ from app.api.v1 import (
     strains,
     support,
     uploads,
+    usage,
     users,
     weather,
 )
@@ -56,6 +57,7 @@ api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(notifications.router, prefix="/users", tags=["users"])
 api_router.include_router(bobby.router, prefix="/bob", tags=["bob"])
 api_router.include_router(credits.router, prefix="/credits", tags=["credits"])
+api_router.include_router(usage.router, prefix="/usage", tags=["usage"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
 api_router.include_router(account.router, prefix="/account", tags=["account"])
 api_router.include_router(support.router, prefix="/support", tags=["support"])

@@ -47,6 +47,7 @@ class AppSettingsOut(BaseModel):
     support_inbox_email: str | None
     notification_default_preview: Literal["full", "discreet"]
     notification_default_frequency: Literal["daily", "in_app"]
+    usage_warning_threshold: float
     updated_by: str | None
     updated_at: datetime | None
 
@@ -62,6 +63,7 @@ class AppSettingsPatch(BaseModel):
     support_inbox_email: EmailStr | Literal[""] | None = None
     notification_default_preview: Literal["full", "discreet"] | None = None
     notification_default_frequency: Literal["daily", "in_app"] | None = None
+    usage_warning_threshold: float | None = Field(default=None, ge=0.5, le=0.95)
     updated_by: str | None = Field(default=None, max_length=255)
 
     model_config = {"extra": "forbid"}
