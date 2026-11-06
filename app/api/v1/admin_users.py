@@ -177,6 +177,25 @@ async def update_user(
     return await get_user_detail(user_id, None, db)  # type: ignore[arg-type]
 
 
+@router.post("/users/{user_id}/verify-email", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_user_email(
+    user_id: uuid.UUID,
+    _: None = Depends(require_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Marca o e-mail como verificado sem o codigo (so liga; nao ha como desmarcar).
+
+    Uso: contas cujo e-mail nao recebe mensagens, como o comprador de teste do Mercado Pago,
+    que precisa entrar no LetsGrow com o mesmo e-mail para autorizar a assinatura no sandbox.
+    """
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado")
+    if not user.is_verified:
+        user.is_verified = True
+        await db.commit()
+
+
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: uuid.UUID,

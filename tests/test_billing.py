@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import test_private_access as support  # registra JSONB -> JSON no SQLite
-from app.api.v1 import admin_billing, admin_business, billing as billing_api, credits
+from app.api.v1 import admin_billing, admin_business, admin_users, billing as billing_api, credits
 from app.config import settings
 from app.database import get_db
 from app.models.app_settings import AppSettings
@@ -72,6 +72,7 @@ class BillingBase(unittest.TestCase):
         app.include_router(credits.router, prefix='/credits')
         app.include_router(admin_billing.router, prefix='/admin')
         app.include_router(admin_business.router, prefix='/admin')
+        app.include_router(admin_users.router, prefix='/admin')
         app.dependency_overrides[get_current_user] = lambda: self.current
         app.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(app)
@@ -528,6 +529,22 @@ class SignatureTests(unittest.TestCase):
     def test_add_months_clamps_to_month_end(self):
         self.assertEqual(billing.add_months(datetime(2026, 1, 31, tzinfo=timezone.utc), 1).day, 28)
         self.assertEqual(billing.add_months(datetime(2026, 11, 15, tzinfo=timezone.utc), 12).year, 2027)
+
+
+class AdminVerifyEmailTests(BillingBase):
+    """Comprador de teste do MP: o e-mail nao recebe o codigo, o admin marca como verificado."""
+
+    def test_admin_marks_email_verified_only_with_token(self):
+        self.other.is_verified = False
+        self.session.commit()
+        url = f'/admin/users/{self.other.id}/verify-email'
+        self.assertEqual(self.client.post(url).status_code, 403)
+        self.assertFalse(self.reload(self.other).is_verified)
+        self.assertEqual(self.client.post(url, headers=self.admin()).status_code, 204)
+        self.assertTrue(self.reload(self.other).is_verified)
+        self.assertEqual(self.client.post(url, headers=self.admin()).status_code, 204)
+        missing = f'/admin/users/{uuid.uuid4()}/verify-email'
+        self.assertEqual(self.client.post(missing, headers=self.admin()).status_code, 404)
 
 
 if __name__ == '__main__':
