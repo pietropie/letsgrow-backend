@@ -133,6 +133,9 @@ class Settings(BaseSettings):
     BILLING_PUBLIC_API_URL: str = "https://api.letsgrowapp.com.br/api/v1"
     # Dias de tolerancia apos a data de renovacao do cartao (MP tenta cobrar de novo)
     BILLING_GRACE_DAYS: int = 3
+    # Plano que app e web destacam como sugerido em /billing/catalog (recommended_plan_key).
+    # E uma sugestao editorial, nao popularidade. Vazio = nenhum; plano fora de venda = nenhum.
+    BILLING_RECOMMENDED_PLAN: str = "cultivador"
     # Google Play Billing (app Android)
     GOOGLE_PLAY_PACKAGE_NAME: str = "com.letsgrow.app"
     # JSON da service account com acesso a Google Play Developer API (conteudo, nao caminho)

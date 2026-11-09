@@ -145,7 +145,9 @@ class BillingBase(unittest.TestCase):
 
 class CatalogAndAdminTests(BillingBase):
     def test_nothing_is_for_sale_until_admin_sets_and_activates_a_price(self):
-        self.assertEqual(self.client.get('/billing/catalog').json()['plans'], [])
+        empty = self.client.get('/billing/catalog').json()
+        self.assertEqual(empty['plans'], [])
+        self.assertIsNone(empty['recommended_plan_key'])
         rows = self.client.get('/admin/billing/plan-prices', headers=self.admin()).json()
         self.assertEqual(len(rows), 6)
         self.assertTrue(all(r['price_brl'] is None and not r['is_active'] for r in rows))
@@ -160,6 +162,7 @@ class CatalogAndAdminTests(BillingBase):
         self.assertEqual(catalog['plans'][0]['plan_key'], 'cultivador')
         self.assertEqual(catalog['plans'][0]['periods'][0]['google_base_plan_id'], 'monthly')
         self.assertTrue(catalog['web_enabled'] and catalog['android_enabled'])
+        self.assertEqual(catalog['recommended_plan_key'], 'cultivador')
 
     def test_admin_validates_play_ids_and_requires_token(self):
         self.assertEqual(self.client.get('/admin/billing/plan-prices').status_code, 403)

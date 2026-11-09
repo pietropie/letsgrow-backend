@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import credits
+from app.config import settings
 from app.database import get_db
 from app.models.billing import PLAN_PERIODS, Subscription
 from app.models.user import User
@@ -55,6 +56,8 @@ class CatalogOut(BaseModel):
     web_enabled: bool
     android_enabled: bool
     plans: list[CatalogPlan]
+    # Plano sugerido para destaque (BILLING_RECOMMENDED_PLAN), so se estiver a venda
+    recommended_plan_key: str | None = None
 
 
 class SubscriptionOut(BaseModel):
@@ -146,7 +149,11 @@ async def get_catalog(db: AsyncSession = Depends(get_db)):
         ]
         if periods:
             plans.append(CatalogPlan(plan_key=plan_key, label=labels.get(plan_key, plan_key), periods=periods))
-    return CatalogOut(web_enabled=mp.is_configured(), android_enabled=gp.is_configured(), plans=plans)
+    recommended = settings.BILLING_RECOMMENDED_PLAN
+    if recommended not in {p.plan_key for p in plans}:
+        recommended = None
+    return CatalogOut(web_enabled=mp.is_configured(), android_enabled=gp.is_configured(), plans=plans,
+                      recommended_plan_key=recommended)
 
 
 @router.get("/subscription", response_model=AccountBillingOut)

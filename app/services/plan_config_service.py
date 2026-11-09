@@ -63,7 +63,9 @@ SEED_DEFAULTS = [
         "price_brl": 44.90,
         "price_display": "R$ 44,90",
         "period_display": "por mes",
-        "badge_text": "Popular",
+        # Sem selo de popularidade: prova social so com dado real (UX item 19).
+        # O destaque honesto e o recommended_plan_key de /billing/catalog.
+        "badge_text": None,
         "max_plants": settings.CULTIVADOR_MAX_PLANTS,
         "max_grows": settings.CULTIVADOR_MAX_GROWS,
         "max_pots_per_grow": settings.CULTIVADOR_MAX_POTS_PER_GROW,
