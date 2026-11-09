@@ -2,6 +2,7 @@
 Assinaturas e pagamentos (contrato com o webapp e o app Android).
 
 GET  /billing/catalog                – planos a venda, precos por periodo e IDs do Google Play
+GET  /billing/recommendation         – plano sugerido pelo uso da conta (?platform=android|web)
 GET  /billing/subscription           – plano da conta, assinatura atual e quem a gerencia
 GET  /billing/subscriptions/{id}     – estado de uma assinatura (volta do checkout na web)
 POST /billing/checkout               – web: assinatura (cartao/Pix) ou creditos -> checkout_url do Mercado Pago
@@ -16,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ from app.services import billing
 from app.services import google_play as gp
 from app.services import mercadopago as mp
 from app.services.auth import get_current_user
+from app.services.recommendation import Platform, get_recommendation
 from app.services.subscription import _effective_plan
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,37 @@ class CatalogOut(BaseModel):
     plans: list[CatalogPlan]
     # Plano sugerido para destaque (BILLING_RECOMMENDED_PLAN), so se estiver a venda
     recommended_plan_key: str | None = None
+
+
+class LimitUsage(BaseModel):
+    used: int
+    total: int
+
+
+class RecommendationUsage(BaseModel):
+    plants: LimitUsage
+    grows: LimitUsage
+
+
+class LimitChange(BaseModel):
+    key: Literal["plants", "grows", "pots_per_grow", "queries", "credits", "sensors"]
+    # None = sem limite; em "sensors", liberado ou nao
+    from_: int | bool | None = Field(serialization_alias="from")
+    to: int | bool | None
+
+
+RecommendationReason = Literal[
+    "plants_limit", "grows_limit", "queries_limit", "queries_near_limit", "credits_exhausted"
+]
+
+
+class RecommendationOut(BaseModel):
+    current_plan: str
+    plan_key: str | None
+    reasons: list[RecommendationReason]
+    covers: list[RecommendationReason]
+    usage: RecommendationUsage
+    changes: list[LimitChange]
 
 
 class SubscriptionOut(BaseModel):
@@ -154,6 +187,17 @@ async def get_catalog(db: AsyncSession = Depends(get_db)):
         recommended = None
     return CatalogOut(web_enabled=mp.is_configured(), android_enabled=gp.is_configured(), plans=plans,
                       recommended_plan_key=recommended)
+
+
+@router.get("/recommendation", response_model=RecommendationOut, response_model_by_alias=True)
+async def get_plan_recommendation(
+    platform: Platform = Query(..., description="android: Google Play; web: Mercado Pago"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    data = await get_recommendation(db, current_user, platform)
+    data["changes"] = [{"key": c["key"], "from_": c["from"], "to": c["to"]} for c in data["changes"]]
+    return RecommendationOut(**data)
 
 
 @router.get("/subscription", response_model=AccountBillingOut)

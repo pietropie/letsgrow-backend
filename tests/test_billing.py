@@ -183,6 +183,82 @@ class CatalogAndAdminTests(BillingBase):
         self.assertNotIn('TEST-token', json.dumps(status))
 
 
+class RecommendationTests(BillingBase):
+    """GET /billing/recommendation (UX item 19b). Contagens de plantas/ambientes simuladas."""
+
+    def recommend(self, platform='web', plants=0, grows=0):
+        from app.services import recommendation
+        with patch.object(recommendation, '_counts', AsyncMock(return_value=(plants, grows))):
+            return self.client.get(f'/billing/recommendation?platform={platform}')
+
+    def cfg(self, plan_key):
+        return run(plan_config_service.get_all_plan_configs(self.db))[plan_key]
+
+    def use_queries(self, used=None):
+        used = self.cfg('free')['ai_queries_per_month'] if used is None else used
+        self.owner.ai_queries_this_month = used
+        self.owner.ai_queries_reset_at = self.now
+        self.session.commit()
+
+    def test_platform_is_required(self):
+        self.assertEqual(self.client.get('/billing/recommendation').status_code, 422)
+
+    def test_smallest_plan_that_covers_every_limit_hit(self):
+        self.set_price('jardineiro', 'monthly', 24.9, product=None)
+        self.set_price('cultivador', 'monthly', 44.9, product=None)
+        self.use_queries()
+        free, cult = self.cfg('free'), self.cfg('cultivador')
+        body = self.recommend(plants=free['max_plants'], grows=free['max_grows']).json()
+        self.assertEqual(body['current_plan'], 'free')
+        self.assertEqual(body['reasons'], ['plants_limit', 'grows_limit', 'queries_limit'])
+        self.assertEqual(body['plan_key'], 'cultivador')  # o Jardineiro não aumenta ambientes
+        self.assertEqual(body['covers'], body['reasons'])
+        self.assertEqual(body['usage']['plants'], {'used': free['max_plants'], 'total': free['max_plants']})
+        changes = {c['key']: (c['from'], c['to']) for c in body['changes']}
+        self.assertEqual(changes['plants'], (free['max_plants'], cult['max_plants']))
+        self.assertEqual(changes['queries'], (free['ai_queries_per_month'], None))
+        self.assertEqual(changes['sensors'], (False, True))
+        self.assertNotIn('credits', changes)
+
+    def test_falls_back_to_the_plan_covering_most_limits(self):
+        self.set_price('jardineiro', 'monthly', 24.9, product=None)
+        self.use_queries()
+        free, jard = self.cfg('free'), self.cfg('jardineiro')
+        # Aumenta só as plantas: o ambiente é igual no Jardineiro (a tela mostra "igual")
+        run(plan_config_service.update_plan_config(self.db, 'jardineiro', {
+            'max_plants': free['max_plants'] + 1, 'max_grows': free['max_grows'],
+            'ai_queries_per_month': free['ai_queries_per_month'] + 3}))
+        body = self.recommend(plants=free['max_plants'], grows=free['max_grows']).json()
+        self.assertEqual(body['plan_key'], 'jardineiro')
+        self.assertEqual(body['covers'], ['plants_limit', 'queries_limit'])
+        changes = {c['key']: (c['from'], c['to']) for c in body['changes']}
+        self.assertEqual(changes['grows'], (free['max_grows'], free['max_grows']))
+        self.assertEqual(changes['queries'], (free['ai_queries_per_month'], free['ai_queries_per_month'] + 3))
+
+    def test_low_usage_gets_next_plan_without_reasons(self):
+        self.set_price('jardineiro', 'monthly', 24.9, product=None)
+        self.set_price('cultivador', 'monthly', 44.9, product=None)
+        body = self.recommend().json()
+        self.assertEqual((body['plan_key'], body['reasons'], body['covers']), ('jardineiro', [], []))
+
+    def test_for_sale_depends_on_platform(self):
+        self.set_price('jardineiro', 'monthly', 24.9, product=None)
+        body = self.recommend('android').json()
+        self.assertEqual((body['plan_key'], body['changes']), (None, []))
+        self.set_price('jardineiro', 'monthly', 24.9, product='letsgrow_jardineiro')
+        self.assertEqual(self.recommend('android').json()['plan_key'], 'jardineiro')
+        with patch.object(settings, 'MP_ACCESS_TOKEN', ''):
+            self.assertIsNone(self.recommend('web').json()['plan_key'])
+
+    def test_nothing_above_the_top_plan(self):
+        self.set_price('jardineiro', 'monthly', 24.9, product=None)
+        self.owner.plan = 'grower_pro'
+        self.owner.plan_expires_at = self.now + timedelta(days=10)
+        self.session.commit()
+        body = self.recommend().json()
+        self.assertEqual((body['current_plan'], body['plan_key']), ('grower_pro', None))
+
+
 class MercadoPagoSubscriptionTests(BillingBase):
     def setUp(self):
         super().setUp()
