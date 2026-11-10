@@ -28,7 +28,8 @@ class DailyBriefRouteTests(unittest.TestCase):
         brief = SimpleNamespace(title='Bom dia', body='Nada urgente hoje.', urgent_count=0, severity='ok',
                                 plant_id=None, plant_name=None, cta_prompt='', generated_at='2026-10-27T11:00:00Z',
                                 reason_tags=[])
-        with patch('app.services.daily_brief.generate_daily_brief', new=AsyncMock(return_value=brief)) as generate:
+        with patch('app.services.daily_brief.generate_daily_brief', new=AsyncMock(return_value=brief)) as generate, \
+                patch('app.services.home_suggestions.build_suggestions', new=AsyncMock(return_value=[])):
             response = self.client.get('/api/v1/plants/daily-brief')
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual((response.json()['title'], response.json()['severity']), ('Bom dia', 'ok'))

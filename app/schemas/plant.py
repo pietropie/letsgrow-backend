@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.schemas.grow import EnvironmentMeasurement
@@ -122,3 +123,44 @@ class PlantSummary(BaseModel):
     last_watering_has_fert: bool = False
     # Imagem de capa da strain — usada como background do PlantCard no app
     strain_image_url: str | None = None
+    # Início v3 (UX item 20): foto mais recente da planta e o que fazer a seguir
+    latest_photo_url: str | None = None
+    latest_photo_at: datetime | None = None
+    latest_photo_event_id: uuid.UUID | None = None
+    cover_image_url: str | None = None       # a foto mais recente; sem foto, a imagem da genética
+    phase_day: int | None = None             # dia da fase atual (o primeiro é o dia 1), só com data registrada
+    next_action: "PlantNextAction | None" = None
+    last_event: "PlantLastEvent | None" = None
+
+
+class PlantNextAction(BaseModel):
+    """O primeiro item de atenção da planta (mesma fonte de "Precisa de atenção")."""
+    action: str                              # watering | temperature | humidity | harvest | flush | ...
+    tier: Literal["critical", "anomaly", "attention"]
+    message: str
+    evidence: list[dict] = []                # registros que sustentam o item (formato dos alertas do Bobby)
+
+
+class PlantLastEvent(BaseModel):
+    id: uuid.UUID
+    event_type: str
+    label: str                               # "Rega", "Nutrição"...
+    event_date: datetime
+
+
+class SuggestionBasis(BaseModel):
+    kind: Literal["attention", "phase", "reading"]
+    text: str                                # de onde veio, em uma linha
+    tier: Literal["critical", "anomaly", "attention", "info"] | None = None
+    evidence: list[dict] = []
+
+
+class BobSuggestion(BaseModel):
+    label: str                               # texto do botão
+    prompt: str                              # pergunta pronta para o Bobby
+    plant_id: uuid.UUID | None = None
+    grow_id: uuid.UUID | None = None
+    basis: SuggestionBasis
+
+
+PlantSummary.model_rebuild()

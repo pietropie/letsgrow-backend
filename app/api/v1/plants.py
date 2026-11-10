@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.services.storage import BUCKET_EVENTS, strain_image_url_for_response
+from app.services.storage import BUCKET_EVENTS, presign_download, strain_image_url_for_response
+from app.services.home_suggestions import last_event, load_plant_context, next_action
 from app.services.upload_access import owns_upload, require_owned_event_photos
 from app.services.grow_env import latest_grow_measurements
 from app.models.event import GrowEvent
@@ -19,10 +21,13 @@ from app.models.strain import Strain
 from app.models.user import User
 from app.schemas.event import EventAnalysisResponse, EventCreate, EventResponse, EventUpdate
 from app.schemas.plant import (
+    BobSuggestion,
     BobTipResponse,
     PlantCreate,
     PlantDetailResponse,
     PlantResponse,
+    PlantLastEvent,
+    PlantNextAction,
     PlantSummary,
     PlantUpdate,
 )
@@ -32,6 +37,7 @@ from app.services.plant_phase import apply_phase_event
 from app.services.subscription import check_plant_limit
 
 logger = logging.getLogger(__name__)
+_BRAZIL_TZ = timezone(timedelta(hours=-3))
 
 router = APIRouter()
 
@@ -139,6 +145,11 @@ async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary
         if row:
             strain_image_url = strain_image_url_for_response(row[0])
 
+    photo_event, photo_url = await _latest_plant_photo(db, plant)
+    ctx = await load_plant_context(db, plant, datetime.now(_BRAZIL_TZ).date())
+    action = next_action(ctx)
+    latest = last_event(ctx)
+
     return PlantSummary(
         plant_id=plant.id,
         temperature=temperature,
@@ -151,7 +162,34 @@ async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary
         last_watering_at=last_watering_at,
         last_watering_has_fert=last_watering_has_fert,
         strain_image_url=strain_image_url,
+        latest_photo_url=photo_url,
+        latest_photo_at=photo_event.event_date if photo_event else None,
+        latest_photo_event_id=photo_event.id if photo_event else None,
+        cover_image_url=photo_url or strain_image_url,
+        phase_day=ctx.phase_day,
+        next_action=PlantNextAction(**action) if action else None,
+        last_event=PlantLastEvent(**latest) if latest else None,
     )
+
+
+async def _latest_plant_photo(db: AsyncSession, plant: Plant) -> tuple[GrowEvent | None, str | None]:
+    """Foto mais recente dos registros da planta (só chaves do dono, como no diário)."""
+    events = (
+        await db.execute(
+            select(GrowEvent)
+            .where(GrowEvent.plant_id == plant.id, GrowEvent.photo_keys.is_not(None))
+            .order_by(GrowEvent.event_date.desc())
+            .limit(20)
+        )
+    ).scalars().all()
+    for ev in events:
+        for key in ev.photo_keys or []:
+            if owns_upload(BUCKET_EVENTS, key, plant.user_id):
+                try:
+                    return ev, presign_download(BUCKET_EVENTS, key)
+                except Exception:  # sem URL assinada, tenta a próxima
+                    logger.warning("Foto %s sem URL assinada", key)
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +319,8 @@ class DailyBriefResponse(BaseModel):
     cta_prompt: str = ""                    # pergunta pré-preenchida para abrir o Bob
     generated_at: str = ""                  # ISO UTC timestamp da geração
     reason_tags: list[str] = []             # ["rega", "floração", "flush"] (máx 4)
+    # Até 3 perguntas prontas, do contexto real (não cacheadas); vazia sem contexto
+    suggestions: list[BobSuggestion] = []
 
 
 @router.get("/daily-brief", response_model=DailyBriefResponse)
@@ -296,7 +336,14 @@ async def get_daily_brief(
     um card "Bob hoje" no topo da home screen.
     """
     from app.services.daily_brief import generate_daily_brief
+    from app.services.home_suggestions import build_suggestions
     brief = await generate_daily_brief(db, current_user.id)
+    try:
+        suggestions = await build_suggestions(db, current_user.id)
+    except Exception as exc:  # o resumo continua valendo sem as sugestões
+        logger.warning("Sugestões do Início falharam: %s", exc)
+        await db.rollback()
+        suggestions = []
     return DailyBriefResponse(
         title=brief.title,
         body=brief.body,
@@ -307,6 +354,7 @@ async def get_daily_brief(
         cta_prompt=brief.cta_prompt,
         generated_at=brief.generated_at,
         reason_tags=brief.reason_tags,
+        suggestions=suggestions,
     )
 
 
