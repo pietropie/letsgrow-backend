@@ -40,7 +40,7 @@ Severity = Literal["ok", "attention", "urgent"]
 
 @dataclass
 class DailyBrief:
-    title: str                          # ex: "🚨 Bob: Gelato precisa de ação agora"
+    title: str                          # ex: "🚨 Bobby: Gelato precisa de ação agora"
     body: str                           # texto gerado pelo LLM (2-3 frases)
     urgent_count: int                   # quantas ações urgentes (para priorizar push)
     severity: Severity = "ok"           # ok | attention | urgent — controla cor do card
@@ -189,16 +189,16 @@ def _build_cta_prompt(
     name = plant_name or "meu cultivo"
     if severity == "urgent":
         topic = f" sobre {reason_tags[0]}" if reason_tags else ""
-        return f"Bob, o que precisa de atenção urgente na {name} hoje{topic}? Me explica e traz ações práticas."
+        return f"Bobby, o que precisa de atenção urgente na {name} hoje{topic}? Me explica e traz ações práticas."
     if severity == "attention":
         topic = f" (especialmente sobre {', '.join(reason_tags[:2])})" if reason_tags else ""
-        return f"Bob, me conta o que você recomenda para a {name} hoje{topic}."
-    return f"Bob, tudo certo com o cultivo hoje? Tem alguma coisa para observar na {name}?"
+        return f"Bobby, me conta o que você recomenda para a {name} hoje{topic}."
+    return f"Bobby, tudo certo com o cultivo hoje? Tem alguma coisa para observar na {name}?"
 
 
 # ─── Geração via LLM ─────────────────────────────────────────────────────────
 
-_BRIEF_SYSTEM = """Você é o Bob, companion de cultivo do Let's Grow.
+_BRIEF_SYSTEM = """Você é o Bobby, assistente de cultivo do LetsGrow (seu nome é Bobby, nunca "Bob").
 Gere um briefing diário CURTÍSSIMO (2-3 frases) para o cultivador.
 - Priorize a ação mais urgente (🔴 crítico > 🟠 anomalia > 🟡 atenção)
 - Se há algo crítico, seja direto: "HOJE você precisa..." — sem rodeios
@@ -278,11 +278,11 @@ async def generate_daily_brief(
 
     if not plants:
         brief = DailyBrief(
-            title="🌱 Bob: bem-vindo ao LetsGrow!",
+            title="🌱 Bobby: bem-vindo ao LetsGrow!",
             body="Cadastre sua primeira planta para que eu possa acompanhar seu cultivo e dar dicas personalizadas todos os dias.",
             urgent_count=0,
             severity="ok",
-            cta_prompt="Bob, como começo a usar o LetsGrow para acompanhar meu cultivo?",
+            cta_prompt="Bobby, como começo a usar o LetsGrow para acompanhar meu cultivo?",
             generated_at=now_iso,
         )
         await cache_brief(user_id, brief)
@@ -338,13 +338,13 @@ async def generate_daily_brief(
 
     # Título dinâmico
     if len(critical_plants) > 1:
-        title = f"🚨 Bob: {len(critical_plants)} plantas precisam de ação hoje"
+        title = f"🚨 Bobby: {len(critical_plants)} plantas precisam de ação hoje"
     elif len(critical_plants) == 1:
-        title = f"🚨 Bob: {critical_plants[0].strain_name} precisa de ação HOJE"
+        title = f"🚨 Bobby: {critical_plants[0].strain_name} precisa de ação HOJE"
     elif severity == "attention":
-        title = "🌿 Bob: tem coisas para cuidar hoje"
+        title = "🌿 Bobby: tem coisas para cuidar hoje"
     else:
-        title = "✅ Bob: tudo em dia no cultivo!"
+        title = "✅ Bobby: tudo em dia no cultivo!"
 
     # CTA prompt
     cta_prompt = _build_cta_prompt(severity, plant_name, reason_tags)

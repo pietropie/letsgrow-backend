@@ -171,3 +171,50 @@ async def upsert_strains(db: AsyncSession, documents: list[tuple[str, str, str]]
 
     await db.commit()
     return created, updated
+
+
+# ─── Catálogo no prompt do Bobby (receita ou perfil de canabinoides) ─────────
+
+# Pergunta sobre escolher genética por perfil: receita, laudo, teores, quimiotipo.
+_CATALOG_TRIGGER = re.compile(
+    r"receita|prescri|laudo|\bcbd\b|canabidiol|\bthc\b|\bteor|quimiotipo|propor[çc][ãa]o"
+    r"|\b(strains?|gen[ée]ticas?|variedades?|cultivares?)\b.*\b(plantar|cultivar|escolher|indica|serve|combina)",
+    re.IGNORECASE,
+)
+_TYPE_LABELS = {"auto": "automática", "photo": "fotoperíodo"}
+_GENETICS_LABELS = {"indica": "índica", "sativa": "sativa", "hybrid": "híbrida"}
+
+
+def wants_strain_catalog(message: str) -> bool:
+    return bool(_CATALOG_TRIGGER.search(message or ""))
+
+
+def _max_pct(value: str | None) -> float:
+    numbers = re.findall(r"\d+(?:[.,]\d+)?", value or "")
+    return max(float(n.replace(",", ".")) for n in numbers) if numbers else -1.0
+
+
+def catalog_line(strain: Strain) -> str:
+    """Uma linha por genética, só com o que o banco de sementes informa."""
+    parts = [strain.name + (f" ({strain.breeder})" if strain.breeder else "")]
+    kind = " · ".join(
+        label for label in (_TYPE_LABELS.get(strain.strain_type or ""), _GENETICS_LABELS.get(strain.genetics or ""))
+        if label
+    )
+    if kind:
+        parts.append(kind)
+    parts.append(f"THC {strain.thc_pct}" if strain.thc_pct else "THC não informado")
+    parts.append(f"CBD {strain.cbd_pct}" if strain.cbd_pct else "CBD não informado")
+    parts.append(f"terpeno dominante: {strain.dominant_terpene}" if strain.dominant_terpene else "terpeno não informado")
+    if strain.flowering_days:
+        parts.append(f"flora ~{strain.flowering_days} dias")
+    if strain.height_cm:
+        parts.append(f"altura {strain.height_cm}")
+    return "- " + " · ".join(parts)
+
+
+async def catalog_for_prompt(db: AsyncSession) -> str:
+    """Todas as genéticas da base, de maior CBD para menor (empate: nome)."""
+    strains = (await db.execute(select(Strain))).scalars().all()
+    ordered = sorted(strains, key=lambda s: (-_max_pct(s.cbd_pct), s.name.lower()))
+    return "\n".join(catalog_line(s) for s in ordered)

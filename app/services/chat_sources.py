@@ -146,6 +146,17 @@ def note_knowledge(chunk) -> None:
     })
 
 
+def note_strain_catalog() -> None:
+    """O catálogo de genéticas da base entrou no prompt (pergunta sobre receita ou perfil)."""
+    collector = _collector.get()
+    if collector is None:
+        return
+    collector.add({
+        "kind": "knowledge", "id": "strain-catalog", "title": "Catálogo de genéticas da base", "date": None,
+        "scope": "knowledge", "plant_id": None, "grow_id": None,
+    })
+
+
 def note_photo(key: str | None, index: int) -> None:
     collector = _collector.get()
     if collector is None:

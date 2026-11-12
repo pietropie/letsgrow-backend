@@ -327,7 +327,7 @@ class ChatRetrievalTests(chat_support.ChatBase):
         prompt = self.llm.calls[0][0].content
         self.assertIn(TOPIC_LIMITS, prompt)
         for rule in ("Não indique onde comprar ou vender", "Não ensine extração", "Não faça promessas terapêuticas",
-                     "menor de 18 anos", "depende da lei local"):
+                     "menor de 18 anos", "Legalidade: no máximo uma linha"):
             self.assertIn(rule, SYSTEM_BASE)
         self.assertIn(TOPIC_LIMITS, build_system_prompt())
         self.assertIn(TOPIC_LIMITS, _BRIEF_SYSTEM)

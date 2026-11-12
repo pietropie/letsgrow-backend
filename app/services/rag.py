@@ -17,6 +17,7 @@ from app.rag import content_policy
 from app.rag.prompts import build_customer_context, build_grow_context, build_plant_context, build_system_prompt
 from app.rag.retriever import retrieve_chunks
 from app.services import ai_provider, chat_sources
+from app.services.strain_catalog import catalog_for_prompt, wants_strain_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,13 @@ async def prepare_chat(
             chat_sources.note_knowledge(chunk)
         rag_context = "\n\n---\n\n".join(text for _, text in texts)
 
+        # Receita, laudo ou perfil de THC/CBD: o Bobby só pode sugerir genéticas desta lista
+        catalog = ""
+        if wants_strain_catalog(user_message):
+            catalog = await catalog_for_prompt(db)
+            if catalog:
+                chat_sources.note_strain_catalog()
+
         images = [img for img in (images or []) if img.startswith("data:image/")][:4]
         keys = list(image_keys or [None] * len(images))[: len(images)]
         for index, key in enumerate(keys):
@@ -195,6 +203,7 @@ async def prepare_chat(
 
     system_prompt = build_system_prompt(
         grow_ctx, rag_context, plant_ctx, customer_ctx, user_preferences=list(memories),
+        strain_catalog=catalog,
     )
 
     # Build message history (last 6 messages to save tokens)
@@ -451,7 +460,7 @@ def _build_photo_analysis_prompt(plant: Plant, event, grow: Grow | None = None) 
     plant_context = "\n".join(ctx_lines)
 
     return (
-        "Você é Bob, consultor especialista em cultivo de cannabis com linguagem acessível e direta.\n\n"
+        "Você é o Bobby, consultor especialista em cultivo de cannabis com linguagem acessível e direta.\n\n"
         f"## Contexto do Cultivo\n{plant_context}\n\n"
         "## Tarefa\n"
         "Analise as fotos enviadas acima e responda SOMENTE com um objeto JSON válido — sem texto antes ou depois do JSON:\n"
