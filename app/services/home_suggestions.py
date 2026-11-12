@@ -97,13 +97,30 @@ async def load_plant_context(db: AsyncSession, plant: Plant, today: date) -> Pla
     return PlantContext(plant, plant_name(plant), events, steps, day, start_evidence)
 
 
+def attention_steps(ctx: PlantContext) -> list[BobStep]:
+    """Itens de atenção da planta, do mais grave para o mais leve (as dicas "info" ficam fora)."""
+    return sorted((s for s in ctx.steps if s.tier in ATTENTION_TIERS), key=lambda s: _TIER_RANK[s.tier])
+
+
 def next_action(ctx: PlantContext) -> dict | None:
     """O primeiro item de atenção da planta, ou None quando não há pendência."""
-    pending = sorted((s for s in ctx.steps if s.tier in ATTENTION_TIERS), key=lambda s: _TIER_RANK[s.tier])
+    pending = attention_steps(ctx)
     if not pending:
         return None
     step = pending[0]
     return {"action": step.action, "tier": step.tier, "message": step.message, "evidence": step.evidence}
+
+
+def grow_next_action(contexts: list[PlantContext]) -> tuple[dict | None, int]:
+    """O item de atenção mais grave entre as plantas ativas do ambiente, e quantos itens há ao todo."""
+    pending = [(ctx, step) for ctx in contexts for step in attention_steps(ctx)]
+    if not pending:
+        return None, 0
+    ctx, step = min(pending, key=lambda pair: _TIER_RANK[pair[1].tier])  # empate: a primeira planta
+    return {
+        "action": step.action, "tier": step.tier, "message": step.message, "evidence": step.evidence,
+        "plant_id": ctx.plant.id, "plant_name": ctx.name,
+    }, len(pending)
 
 
 def last_event(ctx: PlantContext) -> dict | None:

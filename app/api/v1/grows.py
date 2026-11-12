@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
@@ -9,12 +9,14 @@ from app.database import get_db
 from app.models.environment_reading import EnvironmentReading
 from app.models.grow import Grow
 from app.models.plant import Plant
+from app.models.pot import Pot
 from app.models.user import User
 from app.schemas.common import MessageResponse
 from app.schemas.grow import (
     GrowArchiveResult,
     GrowCreate,
     GrowDetailResponse,
+    GrowNextAction,
     GrowPlantBrief,
     GrowResponse,
     GrowSummary,
@@ -22,10 +24,12 @@ from app.schemas.grow import (
 )
 from app.services.auth import get_current_user
 from app.services.grow_env import latest_grow_env
+from app.services.home_suggestions import grow_next_action, load_plant_context
 from app.services.photoperiod import apply_photoperiod
 from app.services.subscription import check_grow_limit, check_plant_limit
 
 router = APIRouter()
+_BRAZIL_TZ = timezone(timedelta(hours=-3))
 
 
 async def _get_grow_or_404(grow_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Grow:
@@ -54,14 +58,24 @@ async def list_grows(
         select(Grow).where(Grow.user_id == current_user.id).order_by(Grow.created_at.desc())
     )
     grows = result.scalars().all()
+    today = datetime.now(_BRAZIL_TZ).date()
 
     summaries = []
     for grow in grows:
-        active_plant_result = await db.execute(
-            select(func.count(Plant.id)).where(Plant.grow_id == grow.id, Plant.is_active == True)  # noqa: E712
-        )
-        active_count = active_plant_result.scalar() or 0
+        active_plants = (
+            await db.execute(
+                select(Plant).where(Plant.grow_id == grow.id, Plant.is_active == True)  # noqa: E712
+                .order_by(Plant.created_at.desc())
+            )
+        ).scalars().all()
+        active_count = len(active_plants)
+        pot_count = (await db.execute(select(func.count(Pot.id)).where(Pot.grow_id == grow.id))).scalar() or 0
         env = await latest_grow_env(db, grow.id)
+        contexts = [await load_plant_context(db, plant, today) for plant in active_plants]
+        action, attention_count = grow_next_action(contexts)
+        phases: dict[str, int] = {}
+        for plant in active_plants:
+            phases[plant.current_phase] = phases.get(plant.current_phase, 0) + 1
 
         summaries.append(
             GrowSummary(
@@ -76,10 +90,19 @@ async def list_grows(
                 lat=grow.lat,
                 lon=grow.lon,
                 location_label=grow.location_label,
-                pot_count=0,
+                pot_count=pot_count,
                 active_plant_count=active_count,
                 days_running=(date.today() - grow.start_date).days,
                 env=env,
+                tent_width_cm=grow.tent_width_cm,
+                tent_depth_cm=grow.tent_depth_cm,
+                tent_height_cm=grow.tent_height_cm,
+                photoperiod_on_at=grow.photoperiod_on_at,
+                target_temp_c=grow.target_temp_c,
+                target_humidity_rh=grow.target_humidity_rh,
+                active_phases=phases,
+                attention_count=attention_count,
+                next_action=GrowNextAction(**action) if action else None,
             )
         )
     return summaries

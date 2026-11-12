@@ -199,8 +199,31 @@ class GrowSummary(BaseModel):
     active_plant_count: int
     days_running: int
     env: GrowEnvSnapshot | None = None
+    # Ambientes v2 (UX item 22): o cartão inteiro numa chamada só
+    tent_width_cm: int | None = None
+    tent_depth_cm: int | None = None
+    tent_height_cm: int | None = None
+    photoperiod_on_at: time | None = None
+    target_temp_c: float | None = None
+    target_humidity_rh: float | None = None
+    active_phases: dict[str, int] = {}       # {"veg": 1, "flower": 2}: plantas ativas por fase
+    attention_count: int = 0                 # itens de atenção das plantas ativas do ambiente
+    next_action: "GrowNextAction | None" = None
 
     model_config = {"from_attributes": True}
+
+
+class GrowNextAction(BaseModel):
+    """O item de atenção mais grave do ambiente (mesmo formato do next_action da planta, com a planta)."""
+    action: str
+    tier: Literal["critical", "anomaly", "attention"]
+    message: str
+    evidence: list[dict] = []
+    plant_id: uuid.UUID
+    plant_name: str
+
+
+GrowSummary.model_rebuild()
 
 
 class GrowResponse(BaseModel):

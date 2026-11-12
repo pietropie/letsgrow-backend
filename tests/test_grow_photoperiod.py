@@ -13,7 +13,8 @@ from sqlalchemy import select
 import test_private_access as support
 from app.api.v1 import grows
 from app.database import get_db
-from app.models.base import Base
+from app.models.base import Base
+from app.models.pot import Pot
 from app.models.grow import Grow
 from app.models.sensor import SensorDevice, SensorReading
 from app.services.auth import get_current_user
@@ -36,7 +37,7 @@ class PhotoperiodTests(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.addCleanup(self.fixture.tearDown)
         self.session = self.fixture.session
-        Base.metadata.create_all(self.fixture.engine, tables=[SensorDevice.__table__, SensorReading.__table__])
+        Base.metadata.create_all(self.fixture.engine, tables=[SensorDevice.__table__, SensorReading.__table__, Pot.__table__])
         app = FastAPI()
         app.include_router(grows.router, prefix='/grows')
         app.dependency_overrides[get_current_user] = lambda: self.fixture.user

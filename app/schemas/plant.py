@@ -131,6 +131,11 @@ class PlantSummary(BaseModel):
     phase_day: int | None = None             # dia da fase atual (o primeiro é o dia 1), só com data registrada
     next_action: "PlantNextAction | None" = None
     last_event: "PlantLastEvent | None" = None
+    # Plantas v2 (UX item 22): o que o cartão de arquivada ou colhida mostra
+    event_count: int = 0                     # registros do diário da planta
+    cycle_start: date | None = None          # germinação cadastrada
+    cycle_end: date | None = None            # colheita; sem ela, o último registro (inativa) ou hoje (ativa)
+    cycle_days: int | None = None            # de cycle_start a cycle_end, contando os dois dias
 
 
 class PlantNextAction(BaseModel):

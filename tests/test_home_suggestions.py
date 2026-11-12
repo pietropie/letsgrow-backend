@@ -199,6 +199,31 @@ class SummaryTests(HomeBase):
                          {"action": "humidity", "tier": "anomaly", "message": "Umidade em 78%."})
         self.assertEqual((body["last_event"]["event_type"], body["last_event"]["label"]), ("watering", "Rega"))
 
+    def test_event_count_and_cycle_days(self):
+        self.steps()
+        body = self.summary()
+        self.assertEqual((body["event_count"], body["cycle_days"], body["cycle_start"]), (0, None, None))  # sem germinação
+
+        self.plant.germination_date = self.today - timedelta(days=59)
+        self.session.commit()
+        body = self.summary()
+        self.assertEqual((body["cycle_days"], body["cycle_end"]), (60, self.today.isoformat()))  # ativa: até hoje
+
+        last = datetime.combine(self.today - timedelta(days=9), datetime.min.time(), tzinfo=BRAZIL) + timedelta(hours=12)
+        for days in (20, 9):
+            when = last - timedelta(days=days - 9)
+            self.session.add(GrowEvent(id=uuid.uuid4(), plant_id=self.plant.id, event_type="note",
+                                       event_date=when.astimezone(timezone.utc)))
+        self.plant.is_active = False
+        self.session.commit()
+        body = self.summary()
+        self.assertEqual(body["event_count"], 2)
+        self.assertEqual((body["cycle_end"], body["cycle_days"]), ((self.today - timedelta(days=9)).isoformat(), 51))
+
+        self.plant.harvest_date = self.today - timedelta(days=5)
+        self.session.commit()
+        self.assertEqual(self.summary()["cycle_days"], 55)  # colhida: até a colheita
+
 
 if __name__ == "__main__":
     unittest.main()

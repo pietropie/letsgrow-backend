@@ -18,6 +18,7 @@ from app.models.base import Base
 from app.models.environment_reading import EnvironmentReading
 from app.models.grow import Grow
 from app.models.plant import Plant
+from app.models.pot import Pot
 from app.models.sensor import SensorDevice, SensorReading
 from app.services import bob_weather
 from app.services.auth import get_current_user
@@ -49,7 +50,7 @@ class WeatherTestCase(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.addCleanup(self.fixture.tearDown)
         self.session = self.fixture.session
-        Base.metadata.create_all(self.fixture.engine, tables=[SensorDevice.__table__, SensorReading.__table__])
+        Base.metadata.create_all(self.fixture.engine, tables=[SensorDevice.__table__, SensorReading.__table__, Pot.__table__])
         app = FastAPI()
         app.include_router(weather.router)
         app.include_router(grows.router, prefix='/grows')

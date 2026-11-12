@@ -146,9 +146,22 @@ async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary
             strain_image_url = strain_image_url_for_response(row[0])
 
     photo_event, photo_url = await _latest_plant_photo(db, plant)
-    ctx = await load_plant_context(db, plant, datetime.now(_BRAZIL_TZ).date())
+    today = datetime.now(_BRAZIL_TZ).date()
+    ctx = await load_plant_context(db, plant, today)
     action = next_action(ctx)
     latest = last_event(ctx)
+    event_count = (
+        await db.execute(select(func.count(GrowEvent.id)).where(GrowEvent.plant_id == plant.id))
+    ).scalar() or 0
+    cycle_start, cycle_end = plant.germination_date, plant.harvest_date
+    if cycle_end is None:
+        last_record = latest["event_date"] if latest else None
+        if plant.is_active:
+            cycle_end = today
+        elif last_record is not None:
+            cycle_end = (last_record if last_record.tzinfo else last_record.replace(tzinfo=timezone.utc)) \
+                .astimezone(_BRAZIL_TZ).date()
+    cycle_days = (cycle_end - cycle_start).days + 1 if cycle_start and cycle_end and cycle_end >= cycle_start else None
 
     return PlantSummary(
         plant_id=plant.id,
@@ -169,6 +182,10 @@ async def _compute_plant_summary(db: AsyncSession, plant: Plant) -> PlantSummary
         phase_day=ctx.phase_day,
         next_action=PlantNextAction(**action) if action else None,
         last_event=PlantLastEvent(**latest) if latest else None,
+        event_count=event_count,
+        cycle_start=cycle_start,
+        cycle_end=cycle_end if cycle_start else None,
+        cycle_days=cycle_days,
     )
 
 
