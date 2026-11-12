@@ -429,6 +429,24 @@ async def update_plant(
                 detail="Não é possível mover planta para um ambiente arquivado",
             )
         updates["grow_label"] = grow.name
+    if updates.get("is_active") is True and not plant.is_active:
+        # Restaurar vale como criar: o ambiente precisa estar ativo e a planta cabe no plano.
+        if "grow_id" not in updates or updates["grow_id"] is None:
+            grow = (await db.execute(select(Grow).where(Grow.id == plant.grow_id))).scalar_one_or_none()
+            if grow is not None and grow.status == "abandoned":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"O ambiente “{grow.name}” está arquivado. Restaure o ambiente antes de restaurar a planta.",
+                )
+        active_count = (
+            await db.execute(
+                select(func.count(Plant.id)).where(
+                    Plant.user_id == current_user.id,
+                    Plant.is_active == True,  # noqa: E712
+                )
+            )
+        ).scalar_one()
+        check_plant_limit(current_user, active_count)
     for field, value in updates.items():
         setattr(plant, field, value)
     if "is_active" in updates:

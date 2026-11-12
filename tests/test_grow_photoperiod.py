@@ -13,7 +13,7 @@ from sqlalchemy import select
 import test_private_access as support
 from app.api.v1 import grows
 from app.database import get_db
-from app.models.base import Base
+from app.models.base import Base
 from app.models.pot import Pot
 from app.models.grow import Grow
 from app.models.sensor import SensorDevice, SensorReading

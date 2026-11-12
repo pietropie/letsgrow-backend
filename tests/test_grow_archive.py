@@ -14,7 +14,7 @@ from app.database import get_db
 from app.models.base import Base
 from app.models.environment_reading import EnvironmentReading
 from app.models.grow import Grow
-from app.models.plant import Plant
+from app.models.plant import Plant
 from app.models.pot import Pot
 from app.models.sensor import SensorDevice, SensorReading
 from app.services.auth import get_current_user
@@ -127,6 +127,35 @@ class GrowArchiveTests(unittest.TestCase):
         status, _, rows = self.state()
         self.assertEqual(status, 'abandoned')
         self.assertEqual(rows[self.second], (False, self.grow))
+
+    def limit_plants(self, max_plants):
+        limits = {'max_grows': 9, 'max_pots_per_grow': 9, 'max_plants': max_plants,
+                  'ai_queries_per_month': 999999, 'sensors_allowed': True}
+        self.enterContext(patch('app.services.subscription._plan_limits', return_value=limits))
+
+    def test_restoring_a_plant_by_patch_checks_the_plan_limit(self):
+        self.limit_plants(2)  # as duas ativas já ocupam o plano
+        response = self.client.patch(f'/plants/{self.earlier}', json={'is_active': True})
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertIn('Limite de plantas', response.json()['detail'])  # mesma trava e texto da criação
+        self.assertEqual(self.state()[2][self.earlier], (False, None))
+
+        self.limit_plants(3)
+        response = self.client.patch(f'/plants/{self.earlier}', json={'is_active': True})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.state()[2][self.earlier], (True, None))
+        # já ativa: editar outros campos não passa pela trava
+        self.limit_plants(1)
+        self.assertEqual(self.client.patch(f'/plants/{self.earlier}', json={'is_active': True, 'notes': 'x'}).status_code, 200)
+
+    def test_restoring_a_plant_of_an_archived_grow_is_refused(self):
+        self.limit_plants(10)
+        self.client.delete(f'/grows/{self.grow}')
+        response = self.client.patch(f'/plants/{self.second}', json={'is_active': True})
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()['detail'],
+                         'O ambiente “Ambiente de teste” está arquivado. Restaure o ambiente antes de restaurar a planta.')
+        self.assertEqual(self.state()[2][self.second], (False, self.grow))  # nada mudou, vínculo mantido
 
     def test_only_the_owner_can_archive_or_restore(self):
         other = self.fixture.other_grow
