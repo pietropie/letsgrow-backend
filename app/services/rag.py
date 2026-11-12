@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -129,6 +130,43 @@ class PreparedChat:
     has_images: bool
 
 
+# Pergunta sobre o cultivo como um todo: aí as cobranças de todas as plantas fazem sentido
+_GENERAL_CARE = re.compile(
+    r"o que (eu )?(preciso|devo|tenho que|falta) fazer|pend[êe]nci|atrasad|cobran[çc]|tarefas?\b"
+    r"|como est[ãa]o (as |minhas )?plantas|resumo do (dia|cultivo)|tudo certo|o que fazer hoje",
+    re.IGNORECASE,
+)
+
+
+async def follow_up_plants(db: AsyncSession, user_id, plant: Plant | None, user_message: str) -> set | None:
+    """Plantas cujas cobranças entram no contexto: a planta em foco e as citadas pelo nome.
+
+    None (todas) só quando a pergunta é sobre o que fazer no cultivo. Em outro assunto,
+    o Bobby não cobra rega de uma planta que não está na conversa.
+    """
+    if _GENERAL_CARE.search(user_message or ""):
+        return None
+    ids = {plant.id} if plant is not None else set()
+    lowered = (user_message or "").lower()
+    rows = (
+        await db.execute(
+            select(Plant.id, Plant.display_name, Plant.strain_name)
+            .where(Plant.user_id == user_id, Plant.is_active == True)  # noqa: E712
+        )
+    ).all()
+    for plant_id, display_name, strain_name in rows:
+        if any(name and re.search(rf"\b{re.escape(name.lower())}\b", lowered) for name in (display_name, strain_name)):
+            ids.add(plant_id)
+    return ids
+
+
+def _attachment_block(data_uri: str) -> dict:
+    """Foto vai como image_url; PDF vai como bloco `media` (documento), que o Gemini lê inteiro."""
+    if data_uri.startswith("data:application/pdf"):
+        return {"type": "media", "mime_type": "application/pdf", "data": data_uri.split(",", 1)[1]}
+    return {"type": "image_url", "image_url": {"url": data_uri}}
+
+
 async def prepare_chat(
     db: AsyncSession,
     user_id,
@@ -151,7 +189,8 @@ async def prepare_chat(
         # Contexto completo do cliente (todos grows + plantas + eventos recentes)
         # injetado em TODA conversa, independentemente de grow/planta selecionados.
         with chat_sources.scope("account"):
-            customer_ctx = await build_customer_context(db, user_id)
+            follow_up = await follow_up_plants(db, user_id, plant, user_message)
+            customer_ctx = await build_customer_context(db, user_id, follow_up_plant_ids=follow_up)
 
         # Contexto focado: planta específica (com grow vinculado) ou grow selecionado
         plant_ctx = ""
@@ -183,15 +222,17 @@ async def prepare_chat(
 
         # Receita, laudo ou perfil de THC/CBD: o Bobby só pode sugerir genéticas desta lista
         catalog = ""
-        if wants_strain_catalog(user_message):
+        recent_questions = [m.get("content") or "" for m in (history or [])[-6:] if m.get("role") == "user"]
+        if any(wants_strain_catalog(text) for text in [user_message, *recent_questions]):
             catalog = await catalog_for_prompt(db)
             if catalog:
                 chat_sources.note_strain_catalog()
 
-        images = [img for img in (images or []) if img.startswith("data:image/")][:4]
+        # Fotos e PDF (receita, laudo): o Gemini lê os dois pelo mesmo formato de data URI
+        images = [img for img in (images or []) if img.startswith(chat_sources.ATTACHMENT_PREFIXES)][:4]
         keys = list(image_keys or [None] * len(images))[: len(images)]
         for index, key in enumerate(keys):
-            chat_sources.note_photo(key, index)
+            chat_sources.note_photo(key, index, is_pdf=images[index].startswith("data:application/pdf"))
 
     memories = (
         await db.execute(
@@ -218,7 +259,7 @@ async def prepare_chat(
     if images:
         content_blocks: list[dict] = [{"type": "text", "text": user_message}]
         for data_uri in images:
-            content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
+            content_blocks.append(_attachment_block(data_uri))
         lc_messages = [*base, HumanMessage(content=content_blocks)]
     else:
         lc_messages = text_only

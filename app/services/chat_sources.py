@@ -157,11 +157,16 @@ def note_strain_catalog() -> None:
     })
 
 
-def note_photo(key: str | None, index: int) -> None:
+# Anexos que o chat aceita e repassa ao modelo: fotos e PDF (receita, laudo)
+ATTACHMENT_PREFIXES = ("data:image/", "data:application/pdf")
+
+
+def note_photo(key: str | None, index: int, is_pdf: bool = False) -> None:
     collector = _collector.get()
     if collector is None:
         return
     collector.add({
-        "kind": "photo", "id": key or f"inline-{index}", "title": "Foto enviada", "date": None,
+        "kind": "photo", "id": key or f"inline-{index}", "title": "PDF enviado" if is_pdf else "Foto enviada",
+        "date": None,
         "scope": "message", "plant_id": None, "grow_id": None,
     })

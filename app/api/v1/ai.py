@@ -46,7 +46,7 @@ from app.services.bob_rules import compute_bob_steps
 from app.services.credits import capture, release
 from app.services.guard import guard_user_message
 from app.services.rag import prepare_chat, run_chat, stream_chat
-from app.services import storage
+from app.services import chat_sources, storage
 from app.services.storage import BUCKET_EVENTS
 from app.services.upload_access import require_owned_upload
 
@@ -54,6 +54,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 MAX_PHOTOS = 4
+# Anexo lido do armazenamento e repassado ao modelo (o Gemini aceita até 20 MB por requisição)
+MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024
 _PREVIOUS_VERSIONS = 3
 
 
@@ -62,7 +64,7 @@ class ChatRequest(BaseModel):
     grow_id: uuid.UUID | None = None
     plant_id: uuid.UUID | None = None
     conversation_id: uuid.UUID | None = None
-    # base64 data URIs, e.g. "data:image/jpeg;base64,..."  (max 4 imagens)
+    # base64 data URIs, e.g. "data:image/jpeg;base64,..." ou "data:application/pdf;base64,..." (max 4)
     images: list[str] | None = None
     # Fotos ja enviadas por POST /uploads/presign (bucket events): preferivel ao base64
     photo_keys: list[str] | None = Field(default=None, max_length=MAX_PHOTOS)
@@ -150,7 +152,7 @@ async def _scope(db: AsyncSession, user_id: uuid.UUID, grow_id, plant_id) -> tup
 
 
 async def _photos(user: User, images: list[str] | None, photo_keys: list[str] | None) -> tuple[list[str], list[str | None]]:
-    """Fotos da mensagem: uploads do proprio usuario (lidos do armazenamento) ou base64 legado."""
+    """Fotos e PDF da mensagem: uploads do proprio usuario (lidos do armazenamento) ou base64 legado."""
     if images and photo_keys:
         raise HTTPException(status_code=422, detail="Envie as fotos por upload (photo_keys) ou em base64 (images), não os dois.")
     if photo_keys:
@@ -161,10 +163,15 @@ async def _photos(user: User, images: list[str] | None, photo_keys: list[str] | 
                 data = await asyncio.to_thread(storage.get_bytes, BUCKET_EVENTS, key)
             except Exception:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Foto não encontrada. Envie de novo.")
+            if len(data) > MAX_ATTACHMENT_BYTES:
+                raise HTTPException(status_code=413,
+                                    detail="Arquivo grande demais. Envie um arquivo de até 15 MB.")
             mime = mimetypes.guess_type(key)[0] or "image/jpeg"
+            if not (mime.startswith("image/") or mime == "application/pdf"):
+                raise HTTPException(status_code=422, detail="Envie uma foto ou um PDF.")
             uris.append(f"data:{mime};base64,{base64.b64encode(data).decode()}")
         return uris, list(photo_keys[:MAX_PHOTOS])
-    inline = [img for img in (images or []) if img.startswith("data:image/")][:MAX_PHOTOS]
+    inline = [img for img in (images or []) if img.startswith(chat_sources.ATTACHMENT_PREFIXES)][:MAX_PHOTOS]
     return inline, [None] * len(inline)
 
 

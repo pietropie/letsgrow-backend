@@ -155,6 +155,8 @@ TOPIC_LIMITS = """LIMITES DE TEMA (NUNCA violar):
   doses ou efeitos de consumo. Responda que isso fica fora do escopo do app.
 - Não faça promessas terapêuticas (não diga que algo trata, cura ou alivia doença ou sintoma),
   não faça diagnóstico e não indique dose nem forma de uso: isso é com o médico.
+  Sugerir genéticas da base para CULTIVAR um perfil de THC/CBD (pedido pelo médico ou pela pessoa)
+  NÃO é recomendação terapêutica: é escolha de cultivo, e você deve fazer (ver RECEITA abaixo).
 - Se a pessoa disser que é menor de 18 anos, não dê orientações de cultivo.
 - Legalidade: no máximo uma linha, sem sermão, por exemplo "se você cultiva com autorização judicial
   ou de associação, siga o que ela permite". Não afirme que algo é permitido."""
@@ -162,7 +164,10 @@ TOPIC_LIMITS = """LIMITES DE TEMA (NUNCA violar):
 # Receita ou laudo médico (aprovado pelo usuário em 2026-11-12): ajudar a escolher genética
 # para CULTIVAR o perfil pedido, só com o catálogo da base, sem efeito terapêutico nem dose.
 PRESCRIPTION_RULES = """RECEITA, LAUDO OU PERFIL DE CANABINOIDES:
-Quando a pessoa mostrar uma receita ou laudo, ou pedir genéticas para um perfil de THC/CBD:
+Quando a pessoa mostrar uma receita ou laudo (foto ou PDF), contar o que o médico orientou, ou pedir
+genéticas para um perfil de THC/CBD, AJUDE A ESCOLHER: nunca responda que não pode indicar genética.
+Se faltar o perfil (quanto de THC e de CBD, ou a proporção), pergunte qual é, sem recusar.
+Se nesta conversa você já recusou antes, corrija agora e faça as sugestões.
 1. Resuma em uma linha só o perfil pedido (ex.: "predominância de CBD, proporção 20:1, THC < 1%").
    Não repita nome, documento, endereço, CID ou diagnóstico do paciente, nem dados do médico.
 2. Sugira 2 ou 3 genéticas SOMENTE do "Catálogo de genéticas da base" (quando ele vier no contexto),
@@ -195,8 +200,9 @@ HIERARQUIA DE PRIORIDADE (para as pendências do cultivo):
 4. 🟢 INFO — curiosidade ou dica sem urgência
 
 REGRAS DE ACCOUNTABILITY:
-- Se o contexto mostrar PENDENTES (recomendações não confirmadas), pergunte se foram feitas (depois de responder a pergunta)
-- Só então gere novas recomendações
+- PENDENTES só aparecem no contexto quando a conversa é sobre aquela planta. Se aparecerem, depois de
+  responder a pergunta, pergunte em uma frase se foram feitas. Se não aparecerem, não cobre nada.
+- Nunca condicione a ajuda à resposta da cobrança: responda por completo mesmo com pendências abertas.
 - Se o cultivador confirmar que fez algo, peça foto para documentar
 - Se não conseguiu fazer, ajude a reagendar
 
@@ -271,13 +277,25 @@ def build_system_prompt(
     return "\n\n".join(parts)
 
 
-async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
+async def build_customer_context(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    follow_up_plant_ids: set[uuid.UUID] | None = None,
+) -> str:
     """Contexto completo do cliente - todos os grows, plantas e eventos recentes.
 
-    Injetado no system prompt de TODA conversa do Bob, independentemente de
+    Injetado no system prompt de TODA conversa do Bobby, independentemente de
     grow/planta selecionados, para que o consultor conheca o historico completo
     do cliente antes de responder.
+
+    `follow_up_plant_ids`: plantas cujas cobranças entram (pendentes, anomalias e
+    ações sugeridas). None = todas; conjunto vazio = nenhuma. O chat passa só as
+    plantas do assunto, para o Bobby não cobrar rega de outra planta.
     """
+
+    def follows(plant_id) -> bool:
+        return follow_up_plant_ids is None or plant_id in follow_up_plant_ids
+
     today = date.today()
     lines: list[str] = []
 
@@ -320,7 +338,7 @@ async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
                 .order_by(BobRecommendation.recommended_at.asc())
                 .limit(5)
             )
-            pending = pending_recs.scalars().all()
+            pending = [rec for rec in pending_recs.scalars().all() if follows(rec.plant_id)]
             if pending:
                 lines.append("PENDENTES (verificar antes de dar novas recomendacoes):")
                 for rec in pending:
@@ -329,7 +347,7 @@ async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
                         f" recomendado em {rec.recommended_at.strftime('%d/%m')}"
                         f" (prazo: {rec.deadline.strftime('%d/%m %H:%M')})"
                     )
-                lines.append("→ Pergunte ao cultivador se foi feito antes de gerar novas recomendacoes.")
+                lines.append("→ Depois de responder a pergunta, pergunte em uma frase se foi feito (sem condicionar a ajuda).")
                 lines.append("")
         except Exception:
             pass  # Tabela ainda nao existe — ignora silenciosamente
@@ -348,7 +366,7 @@ async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
                 .order_by(BobAnomaly.detected_at.desc())
                 .limit(5)
             )
-            anomalies = anomalies_result.scalars().all()
+            anomalies = [anom for anom in anomalies_result.scalars().all() if follows(anom.plant_id)]
             if anomalies:
                 lines.append("ANOMALIAS ATIVAS:")
                 for anom in anomalies:
@@ -456,7 +474,9 @@ async def build_customer_context(db: AsyncSession, user_id: uuid.UUID) -> str:
             else:
                 lines.append("    Treinamentos realizados: nenhum registrado")
 
-            # Acoes sugeridas — motor unificado de regras do Bob 2.0
+            # Acoes sugeridas — motor unificado de regras do Bob 2.0 (só das plantas do assunto)
+            if not follows(plant.id):
+                continue
             _tier_labels = {
                 "critical":  "🔴 CRÍTICO",
                 "anomaly":   "🟠 ANOMALIA",
