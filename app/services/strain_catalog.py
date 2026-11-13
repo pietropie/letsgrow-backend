@@ -178,6 +178,8 @@ async def upsert_strains(db: AsyncSession, documents: list[tuple[str, str, str]]
 # Pergunta sobre escolher genética por perfil: receita, laudo, teores, quimiotipo.
 _CATALOG_TRIGGER = re.compile(
     r"receita|prescri|laudo|\bcbd\b|canabidiol|\bthc\b|\bteor|quimiotipo|propor[çc][ãa]o"
+    # efeitos relatados, aroma e sabor de uma genética
+    r"|\befeitos?\b|o que (eu )?(posso |vou )?sentir|\baroma\b|\bsabor\b"
     r"|\b(strains?|gen[ée]ticas?|variedades?|cultivares?)\b.*\b(plantar|cultivar|escolher|indica|serve|combina)",
     re.IGNORECASE,
 )

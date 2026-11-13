@@ -29,6 +29,20 @@ class PromptTests(unittest.TestCase):
         self.assertIn("Se nesta conversa você já recusou antes, corrija agora", SYSTEM_BASE)
         self.assertIn("NÃO é recomendação terapêutica", SYSTEM_BASE)
 
+    def test_reported_effects_are_answered_not_refused(self):
+        from app.rag.prompts import TOPIC_LIMITS
+        from app.services.strain_catalog import wants_strain_catalog
+        self.assertIn("EFEITOS RELATADOS DE UMA GENÉTICA", SYSTEM_BASE)
+        self.assertIn("responda (não recuse)", SYSTEM_BASE)
+        self.assertIn("Se a base não trouxer os efeitos daquela genética, diga isso", SYSTEM_BASE)
+        self.assertIn("como tendência, não como fato daquela genética", SYSTEM_BASE)
+        self.assertIn("não são promessa terapêutica", SYSTEM_BASE)
+        self.assertIn("Sem dose, sem forma de consumo, sem diagnóstico", SYSTEM_BASE)
+        self.assertNotIn("doses ou efeitos de consumo", TOPIC_LIMITS)  # a recusa antiga saiu
+        self.assertIn("Não ensine extração", TOPIC_LIMITS)  # extração continua fora
+        self.assertTrue(wants_strain_catalog("Quais são os efeitos de cada uma das strains que você me indicou?"))
+        self.assertTrue(wants_strain_catalog("O que eu posso sentir com a Gelato?"))
+
     def test_follow_up_never_blocks_the_answer(self):
         self.assertIn("Nunca condicione a ajuda à resposta da cobrança", SYSTEM_BASE)
         self.assertNotIn("Só então gere novas recomendações", SYSTEM_BASE)
