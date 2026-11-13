@@ -124,7 +124,7 @@ ORPHAN_DOC = """## Afirmações
 
 ## Efeitos no corpo
 
-- Efeito sedativo e relaxante.
+- Bom para insônia e dor.
 
 ## Secagem
 
@@ -140,9 +140,11 @@ class SanitizeTests(unittest.TestCase):
         self.assertIn("| **Floração** | 53–63 dias |", clean)
         self.assertIn("- **Indoor:** Planta de tamanho médio.", clean)
         self.assertIn("Colheita em outubro", clean)
-        for gone in ("NetSeeds", "R$", "Efeitos e Usos", "ansiedade", "rosin", "Flora Urbana", "Disponível no Brasil",
-                     "Mirceno", "Perfil de Terpenos\n\n|"):
+        for gone in ("NetSeeds", "R$", "Usos medicinais", "ansiedade", "rosin", "Flora Urbana", "Disponível no Brasil",
+                     "potencializa THC"):
             self.assertNotIn(gone, clean)
+        # opção A (PLAYSTORE.md §2.2): o perfil de efeito relatado fica, o uso medicinal sai
+        self.assertIn("## Efeitos e Usos\n\n**Efeitos reportados:** relaxante e sociável.", clean)
         self.assertFalse(cp.is_blocked_text(clean))
         self.assertEqual(cp.sanitize_markdown(clean), clean)  # idempotente
 
@@ -152,9 +154,30 @@ class SanitizeTests(unittest.TestCase):
         self.assertIn("fósforo disponível no solo", clean)
         self.assertIn("tolera doses altas", clean)
         self.assertIn("por ansiedade", clean)
-        # o qualificador de efeito sai e a informação de colheita fica
-        self.assertIn("| Leitosos | ✅ Colher |", clean)
-        self.assertIn("| Âmbar (>50%) | THC → CBN |", clean)
+        # o perfil de efeito na colheita é efeito relatado (opção A): a linha fica inteira
+        self.assertIn("| Leitosos | ✅ Colher (efeito mais cerebral) |", clean)
+        self.assertIn("| Âmbar (>50%) | THC → CBN, sedativo |", clean)
+
+    def test_reported_effects_pass_without_slang_occasion_dose_or_health(self):
+        doc = """## Efeitos e Usos
+
+**Efeitos reportados:** relaxante, eufórico, sedativo. Buzz cerebral longo. Ideal para atividade diurna.
+Tende a evoluir para sonolência em doses maiores. Uma das mais fortes, a que mais derruba.
+
+**Usos medicinais relatados:** ansiedade, insônia.
+
+- Limoneno | cítrico; energizante; antianxiedade
+- Mirceno | terroso; relaxante
+
+**Aroma característico:** limão e incenso.
+"""
+        clean = cp.sanitize_markdown(doc)
+        self.assertIn("**Efeitos reportados:** relaxante, eufórico, sedativo.", clean)
+        self.assertIn("- Mirceno | terroso; relaxante", clean)
+        self.assertIn("**Aroma característico:** limão e incenso.", clean)
+        for gone in ("Buzz", "atividade diurna", "doses maiores", "derruba", "Usos medicinais", "insônia",
+                     "antianxiedade"):
+            self.assertNotIn(gone, clean)
 
     def test_pharmacology_and_use_risks_leave_cultivation_stays(self):
         clean = cp.sanitize_markdown(PHARMACOLOGY_DOC)
@@ -211,7 +234,8 @@ class SanitizeTests(unittest.TestCase):
                 continue
             clean = cp.sanitize_markdown(_strip_frontmatter(md.read_text(encoding="utf-8")))
             self.assertFalse(cp.is_blocked_text(clean), rel)
-            for term in ("NetSeeds", "Flora Urbana", "Seeds Genetics", "rosin", "Bubble Hash", "Efeitos e Usos",
+            for term in ("NetSeeds", "Flora Urbana", "Seeds Genetics", "rosin", "Bubble Hash", "antianxiedade",
+                         "chapad", "wake and bake", "alívio de dor",
                          "## Disponível no Brasil", "Usos medicinais", "Riscos Reais", "Psicose", "CB-1",
                          "Perfil de Segurança do THC", "(Cap. 1, p. 16)"):
                 self.assertNotIn(term.lower(), clean.lower(), f"{rel}: {term}")
@@ -317,8 +341,10 @@ class ChatRetrievalTests(chat_support.ChatBase):
         data = self.chat()
         prompt = self.llm.calls[0][0].content
         self.assertIn("Floração de 60 dias.", prompt)
-        for gone in ("NetSeeds", "ansiedade", "loja X", "Efeitos e Usos"):
-            self.assertNotIn(gone, prompt)
+        knowledge_part = prompt.split("## Base de Conhecimento Relevante", 1)[1]
+        for gone in ("NetSeeds", "ansiedade", "Usos medicinais", "Efeitos e Usos"):
+            self.assertNotIn(gone, knowledge_part)  # a seção ficou vazia sem os usos medicinais e saiu
+        self.assertNotIn("loja X", prompt)
         knowledge = [s["id"] for s in data["sources"] if s["kind"] == "knowledge"]
         self.assertEqual(knowledge, [str(old.id)])  # o chunk bloqueado não vira fonte
 
