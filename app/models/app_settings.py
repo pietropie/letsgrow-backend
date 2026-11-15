@@ -22,6 +22,12 @@ DEFAULT_APP_SETTINGS = {
     "notification_default_preview": "full",
     "notification_default_frequency": "daily",
     "usage_warning_threshold": 0.8,
+    "shop_enabled": False,
+    "shop_page_enabled": True,
+    "shop_grow_block_enabled": True,
+    "shop_plant_block_enabled": True,
+    "shop_account_entry_enabled": True,
+    "shop_sponsored_enabled": False,
 }
 
 
@@ -40,4 +46,13 @@ class AppSettings(Base, TimestampMixin):
     notification_default_frequency: Mapped[str] = mapped_column(String(10), nullable=False, default="daily")
     # Fração do uso a partir da qual GET /usage marca near_limit (o Início avisa)
     usage_warning_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.8)
+    # Equipamentos e insumos (UX item 26): interruptor geral e um por ponto de exibição.
+    # O Bobby não tem interruptor: nunca indica produto (PLAYSTORE.md §2.3, condição 6).
+    shop_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    shop_page_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    shop_grow_block_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    shop_plant_block_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    shop_account_entry_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # "Patrocinado" (posição paga) muda o "Contém anúncios" da Play para Sim: desligado por padrão
+    shop_sponsored_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)

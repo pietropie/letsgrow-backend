@@ -13,6 +13,7 @@ from app.models.knowledge import AIConversation, KnowledgeChunk
 from app.models.notification import NotificationPreference
 from app.models.plan_config import PlanConfig
 from app.models.plant import Plant
+from app.models.shop import ShopCategory, ShopClickDaily, ShopDismissal, ShopProduct, ShopStore
 from app.models.pot import Pot
 from app.models.sensor import SensorDevice, SensorReading
 from app.models.strain import Strain
@@ -35,6 +36,11 @@ __all__ = [
     "AIConfig",
     "AppSettings",
     "PlanConfig",
+    "ShopCategory",
+    "ShopClickDaily",
+    "ShopDismissal",
+    "ShopProduct",
+    "ShopStore",
     "FeatureFlag",
     "Grow",
     "Pot",

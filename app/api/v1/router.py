@@ -10,6 +10,7 @@ from app.api.v1 import (
     admin_iot,
     admin_knowledge,
     admin_plans,
+    admin_shop,
     admin_stats,
     admin_strains,
     admin_users,
@@ -28,6 +29,7 @@ from app.api.v1 import (
     plans,
     plants,
     sensors,
+    shop,
     strains,
     support,
     uploads,
@@ -50,6 +52,7 @@ api_router.include_router(admin_dev_mode.router, prefix="/admin", tags=["admin"]
 api_router.include_router(feature_flags.admin_router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_business.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_billing.router, prefix="/admin", tags=["admin"])
+api_router.include_router(admin_shop.router, prefix="/admin", tags=["admin"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(grows.router, prefix="/grows", tags=["grows"])
 api_router.include_router(environment_readings.router, prefix="/grows", tags=["grows"])
@@ -57,6 +60,7 @@ api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(notifications.router, prefix="/users", tags=["users"])
 api_router.include_router(bobby.router, prefix="/bob", tags=["bob"])
 api_router.include_router(credits.router, prefix="/credits", tags=["credits"])
+api_router.include_router(shop.router, prefix="/shop", tags=["shop"])
 api_router.include_router(usage.router, prefix="/usage", tags=["usage"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
 api_router.include_router(account.router, prefix="/account", tags=["account"])
