@@ -194,6 +194,14 @@ def user_object_keys(user_id) -> list[tuple[str, str]]:
     return found
 
 
+def count_objects(bucket: str) -> int:
+    """Quantos objetos o bucket tem (a retenção do chat usa para ficar abaixo da trava do backup)."""
+    client = get_minio_client()
+    if not client.bucket_exists(bucket):
+        return 0
+    return sum(1 for _ in client.list_objects(bucket, recursive=True))
+
+
 def remove_object_strict(bucket: str, object_key: str) -> None:
     """Como delete_object, mas so ignora "nao existe"; outras falhas sobem."""
     try:

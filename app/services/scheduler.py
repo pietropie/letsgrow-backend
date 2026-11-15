@@ -26,6 +26,7 @@ _JOB_ID = "daily_push"
 _PERSONAL_JOB_ID = "personal_push"
 _MAINTENANCE_JOB_ID = "account_maintenance"
 _BILLING_JOB_ID = "billing_reconcile"
+_CHAT_ATTACHMENTS_JOB_ID = "chat_attachment_retention"
 
 # Instância global — importada pelo main.py e pelo endpoint admin
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -103,6 +104,18 @@ async def _run_billing_reconcile() -> None:
         logger.error("Erro na reconciliação de pagamentos: %s", exc, exc_info=True)
 
 
+async def _run_chat_attachment_retention() -> None:
+    """Anexos do chat do Bobby (fotos e PDF) saem do armazenamento depois de 30 dias."""
+    try:
+        from app.database import AsyncSessionLocal
+        from app.services.chat_attachments import expire_attachments
+
+        async with AsyncSessionLocal() as db:
+            await expire_attachments(db)
+    except Exception as exc:
+        logger.error("Erro na retenção dos anexos do chat: %s", exc, exc_info=True)
+
+
 def _schedule_job(hour: int, minute: int) -> None:
     """Registra (ou substitui) o job de push diário no scheduler."""
     if scheduler.get_job(_JOB_ID):
@@ -156,6 +169,16 @@ def setup_background_jobs() -> None:
         name="Reconciliação de pagamentos (Mercado Pago e Google Play)",
         replace_existing=True,
         misfire_grace_time=1800,
+    )
+    scheduler.add_job(
+        _run_chat_attachment_retention,
+        # 02:30 em Brasília: antes do pg_dump (05:45 UTC) e do mirror das fotos (06:15 UTC), que leva o que saiu
+        # para a lixeira do backup no mesmo dia
+        trigger=CronTrigger(hour=5, minute=30, timezone="UTC"),
+        id=_CHAT_ATTACHMENTS_JOB_ID,
+        name="Retenção de 30 dias dos anexos do chat do Bobby",
+        replace_existing=True,
+        misfire_grace_time=1800,  # atrasada, ainda roda antes do mirror das 06:15
     )
 
 

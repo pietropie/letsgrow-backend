@@ -46,7 +46,7 @@ from app.services.bob_rules import compute_bob_steps
 from app.services.credits import capture, release
 from app.services.guard import guard_user_message
 from app.services.rag import prepare_chat, run_chat, stream_chat
-from app.services import chat_sources, storage
+from app.services import chat_attachments, chat_sources, storage
 from app.services.storage import BUCKET_EVENTS
 from app.services.upload_access import require_owned_upload
 
@@ -331,6 +331,11 @@ async def regenerate_endpoint(
     question = messages[index - 1] if index > 0 else None
     if not question or question.get("role") != "user":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Não há pergunta para esta resposta.")
+    if question.get("expired_photo_keys") and not question.get("photo_keys"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="O anexo desta pergunta expirou (fica 30 dias). Envie a pergunta de novo com o anexo.",
+        )
     if question.get("images") and not question.get("photo_keys"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -540,10 +545,13 @@ async def get_conversation(
         )
     ).all()
     feedback = {message_id: {"rating": rating, "reason": reason} for message_id, rating, reason in rows}
-    messages = [
-        {**m, "feedback": feedback.get(m.get("id"))} if isinstance(m, dict) and m.get("role") == "assistant" else m
-        for m in (conversation.messages or [])
-    ]
+    messages = []
+    for m in conversation.messages or []:
+        if isinstance(m, dict) and m.get("role") == "assistant":
+            m = {**m, "feedback": feedback.get(m.get("id"))}
+        elif isinstance(m, dict) and (m.get("photo_keys") or m.get("expired_photo_keys")):
+            m = {**m, "attachments": chat_attachments.attachments(m)}  # disponível, expira em, pode guardar
+        messages.append(m)
     return {
         "id": conversation.id, "user_id": conversation.user_id, "grow_id": conversation.grow_id,
         "plant_id": conversation.plant_id, "title": conversation.title, "messages": messages,
@@ -579,6 +587,52 @@ async def delete_conversation(
 ):
     """Apaga a conversa e as avaliacoes das respostas dela. A memoria do Bobby nao muda."""
     conversation = await _own_conversation(db, conversation_id, current_user.id)
+    # Os anexos da conversa saem junto (as fotos guardadas no calendário são cópias e ficam)
+    keys = [k for m in conversation.messages or [] if isinstance(m, dict) for k in m.get("photo_keys") or []]
     await db.delete(conversation)
     await db.commit()
+    for key in keys:
+        await asyncio.to_thread(storage.delete_object, BUCKET_EVENTS, key)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class SaveAttachmentRequest(BaseModel):
+    message_id: str = Field(min_length=1, max_length=64)
+    photo_key: str = Field(min_length=1, max_length=300)
+    plant_id: uuid.UUID
+    # Dia do registro no diário; sem ele, vale o dia em que a foto foi enviada na conversa
+    event_date: datetime | None = None
+
+
+class SavedAttachmentResponse(BaseModel):
+    event_id: uuid.UUID
+    plant_id: uuid.UUID
+    event_date: datetime
+    photo_url: str | None
+
+
+@router.post(
+    "/conversations/{conversation_id}/attachments/save",
+    response_model=SavedAttachmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def save_attachment_to_calendar(
+    conversation_id: uuid.UUID,
+    body: SaveAttachmentRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """"Guardar no calendário": a foto anexada vira registro de foto da planta e sai da retenção de 30 dias."""
+    conversation = await _own_conversation(db, conversation_id, current_user.id)
+    try:
+        event = await chat_attachments.save_to_calendar(
+            db, current_user.id, conversation, body.message_id, body.photo_key, body.plant_id, body.event_date,
+        )
+    except chat_attachments.AttachmentError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail)
+    key = (event.photo_keys or [None])[0]
+    try:
+        url = storage.presign_download(BUCKET_EVENTS, key) if key else None
+    except Exception:
+        url = None
+    return SavedAttachmentResponse(event_id=event.id, plant_id=event.plant_id, event_date=event.event_date, photo_url=url)
