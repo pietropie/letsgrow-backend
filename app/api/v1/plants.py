@@ -617,7 +617,7 @@ async def analyze_event(
     db: AsyncSession = Depends(get_db),
 ):
     """Analisa as fotos de um evento do diário com IA multimodal (requer um
-    provedor com suporte a visão configurado em /admin/ai-panel — ex.: Gemini)."""
+    provedor com suporte a visão configurado no letsgrow-admin (página IA) — ex.: Gemini)."""
     plant = await _get_plant_or_404(plant_id, current_user.id, db)
     result = await db.execute(
         select(GrowEvent).where(GrowEvent.id == event_id, GrowEvent.plant_id == plant_id)
@@ -652,14 +652,13 @@ async def analyze_event(
 
     try:
         analysis = await analyze_event_photos(db, plant=plant, event=event)
-    except RuntimeError as exc:
-        await _release_reservation()
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
-    except Exception as exc:
+    except Exception:
+        # O erro do provedor (modelo, API) fica no log; o app recebe uma mensagem genérica
+        logger.exception("Análise de fotos falhou (evento %s)", event.id)
         await _release_reservation()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Falha ao analisar fotos com IA: {exc}",
+            detail="Não foi possível analisar as fotos agora. Tente de novo em instantes.",
         )
 
     # Incrementa contador de uso de IA (planos com limite: free, jardineiro)

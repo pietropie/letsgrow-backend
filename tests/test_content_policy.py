@@ -19,6 +19,7 @@ from sqlalchemy import select
 import test_admin_knowledge as knowledge_support
 import test_bobby_chat as chat_support
 import test_sem_api as sem
+from app.services.chat_sources import opaque_id
 from app.api.v1 import auth, users
 from app.config import settings
 from app.database import get_db
@@ -346,7 +347,7 @@ class ChatRetrievalTests(chat_support.ChatBase):
             self.assertNotIn(gone, knowledge_part)  # a seção ficou vazia sem os usos medicinais e saiu
         self.assertNotIn("loja X", prompt)
         knowledge = [s["id"] for s in data["sources"] if s["kind"] == "knowledge"]
-        self.assertEqual(knowledge, [str(old.id)])  # o chunk bloqueado não vira fonte
+        self.assertEqual(knowledge, [opaque_id(old.id)])  # o chunk bloqueado não vira fonte
 
     def test_topic_limits_are_in_every_bobby_prompt(self):
         self.chat()

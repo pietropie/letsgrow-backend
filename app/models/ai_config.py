@@ -11,7 +11,7 @@ from app.models.base import Base, TimestampMixin
 class AIConfig(Base, TimestampMixin):
     """
     Configuração ativa do(s) provedor(es) de IA, editável em runtime via painel
-    admin (/admin/ai-panel) sem precisar de redeploy.
+    admin (letsgrow-admin, página IA) sem precisar de redeploy.
 
     Tabela de linha única: sempre lemos a primeira linha (a mais antiga). Isso
     evita ambiguidade — se quiserem múltiplos perfis no futuro, dá pra evoluir

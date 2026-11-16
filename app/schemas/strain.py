@@ -1,6 +1,6 @@
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class StrainSearchResult(BaseModel):
@@ -31,6 +31,13 @@ class StrainResponse(BaseModel):
     height_cm: str | None
     summary: str | None
     image_url: str | None
-    source_file: str
+    # Caminho do arquivo interno da wiki: não sai para o app (proteção da API). O campo
+    # continua na resposta, sempre nulo, para os clientes que já o tipam como opcional.
+    source_file: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("source_file", mode="before")
+    @classmethod
+    def _hide_source_file(cls, value):
+        return None

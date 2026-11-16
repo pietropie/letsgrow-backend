@@ -13,6 +13,8 @@ Cada fonte: {kind, id, title, date, scope, plant_id?, grow_id?}
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, datetime
@@ -136,12 +138,19 @@ def knowledge_title(chunk) -> str:
     return stem.replace("-", " ").replace("_", " ").strip().capitalize() or "Base de conhecimento"
 
 
+def opaque_id(value) -> str:
+    """Id estável da fonte, sem expor o id interno do trecho da base (proteção da API)."""
+    from app.config import settings
+    digest = hmac.new(settings.SECRET_KEY.encode(), str(value).encode(), hashlib.sha256).hexdigest()
+    return "kb-" + digest[:16]
+
+
 def note_knowledge(chunk) -> None:
     collector = _collector.get()
     if collector is None:
         return
     collector.add({
-        "kind": "knowledge", "id": str(chunk.id), "title": f"Guia · {knowledge_title(chunk)}", "date": None,
+        "kind": "knowledge", "id": opaque_id(chunk.id), "title": f"Guia · {knowledge_title(chunk)}", "date": None,
         "scope": "knowledge", "plant_id": None, "grow_id": None,
     })
 

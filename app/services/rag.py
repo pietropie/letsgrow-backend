@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ─── Cache de configuração + clients de IA ───────────────────────────────────
 #
 # A config (provider/modelo/dimensões) agora vive na tabela ai_config e é
-# editável em runtime pelo painel admin (/admin/ai-panel) — sem redeploy.
+# editável em runtime pelo painel admin (letsgrow-admin, página IA) — sem redeploy.
 #
 # Para não bater no banco a cada mensagem de chat / chunk indexado, mantemos
 # um cache em memória do processo com TTL curto. Quando o TTL expira, relemos
@@ -432,7 +432,7 @@ def invalidate_plant_tip_cache(plant_id) -> None:
 # LangChain (`image_url` com data URI), suportado nativamente por
 # ChatGoogleGenerativeAI/ChatOpenAI/ChatAnthropic. Provedores sem suporte a
 # visão (DeepSeek/Z.ai) vão simplesmente falhar na chamada — é o admin quem
-# escolhe o provider/modelo em /admin/ai-panel, então recomendamos Gemini.
+# escolhe o provider/modelo no letsgrow-admin (página IA), então recomendamos Gemini.
 
 def _build_photo_analysis_prompt(plant: Plant, event, grow: Grow | None = None) -> str:
     """Constrói o prompt de análise multimodal com contexto completo da planta e grow."""

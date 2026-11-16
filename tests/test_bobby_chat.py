@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy import func, select
 
 import test_sem_api as sem
+from app.services.chat_sources import opaque_id
 from app.api.v1 import ai
 from app.models.bob import BobFeedback
 from app.models.credits import CreditQuote
@@ -120,7 +121,7 @@ class ChatMessageTests(ChatBase):
         sources = {(s["kind"], s["id"]): s for s in data["sources"]}
         event = sources[("event", str(self.event.id))]
         self.assertEqual((event["title"], event["scope"]), ("Rega · pH 6,2", "focus"))
-        self.assertEqual(sources[("knowledge", str(self.chunk.id))]["title"], "Guia · Rega em solo")
+        self.assertEqual(sources[("knowledge", opaque_id(self.chunk.id))]["title"], "Guia · Rega em solo")
         self.assertIn(("environment_reading", str(self.reading.id)), sources)
         self.assertNotIn(("event", str(self.foreign_event.id)), sources)  # dado de outra conta nunca entra
         self.assertEqual(data["sources"][0]["scope"], "focus")             # foco antes do contexto geral

@@ -16,6 +16,26 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # Proteção da API (app/services/rate_limit.py). Limites "quantidade/segundos", folgados
+    # para o uso real do app; estourar responde 429 com Retry-After.
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_AUTH_IP: str = "30/600"            # login, cadastro, código por e-mail, senha
+    RATE_LIMIT_CHAT_USER: str = "40/60"           # mensagens ao Bobby (chat, stream, gerar de novo)
+    RATE_LIMIT_CHAT_IP: str = "120/60"
+    RATE_LIMIT_ATTACHMENTS_USER: str = "60/60"    # uploads e "Guardar no calendário"
+    RATE_LIMIT_SHOP_CLICK_USER: str = "60/60"     # "Ver na loja"
+    RATE_LIMIT_SHOP_CLICK_IP: str = "300/60"
+    RATE_LIMIT_PUBLIC_IP: str = "120/60"          # rotas sem login
+    RATE_LIMIT_DEFAULT_USER: str = "600/60"       # teto geral por usuário logado
+    RATE_LIMIT_DEFAULT_IP: str = "1200/60"
+    # Proxies cujo X-Forwarded-For vale (o Traefik do Coolify fica na rede privada do Docker)
+    TRUSTED_PROXIES: str = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32,::1/128"
+    # Segredo compartilhado com o BFF do web: com ele, X-LetsGrow-Client-IP vira o IP do cliente
+    # (o Traefik descarta o X-Forwarded-For de fora). Vazio = recurso desligado.
+    BFF_SHARED_SECRET: str = ""
+    # Documentação da API (/api-docs). Desligada em produção: é o mapa de todas as rotas
+    API_DOCS_ENABLED: bool = False
+
     # JWT
     SECRET_KEY: str = "change-me-in-production"
     ALGORITHM: str = "HS256"
@@ -41,7 +61,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "models/gemini-embedding-001"
     EMBEDDING_DIMENSIONS: int = 768
 
-    # Provedores alternativos de IA — usados pelo painel admin (/admin/ai-panel)
+    # Provedores alternativos de IA — usados pelo painel admin (letsgrow-admin, página IA)
     # para permitir trocar de provider em runtime, sem redeploy (ver
     # app/services/ai_provider.py e app/models/ai_config.py). Deixe em branco
     # se não for usar o provedor — o erro só aparece se alguém selecionar esse
@@ -53,7 +73,7 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     ZAI_API_KEY: str = ""
 
-    # Token compartilhado que protege o painel admin (/admin/ai-panel) e os
+    # Token compartilhado que protege o painel admin (letsgrow-admin, página IA) e os
     # endpoints /api/v1/admin/*. Gere algo forte com:
     #   python -c "import secrets; print(secrets.token_hex(32))"
     # e configure a MESMA string aqui (.env local) e no Coolify (produção).

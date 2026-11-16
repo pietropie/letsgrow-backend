@@ -31,7 +31,7 @@ async def main(wiki_path: Path, clear: bool) -> None:
 
     async with AsyncSessionLocal() as db:
         # Lê o provider/modelo de embedding ativo da ai_config (editável no
-        # painel admin /admin/ai-panel) — assim o script sempre usa o mesmo
+        # letsgrow-admin, página IA) — assim o script sempre usa o mesmo
         # "espaço vetorial" do retriever em runtime.
         config, _, embeddings = await get_ai_context(db)
         print(

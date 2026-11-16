@@ -98,6 +98,23 @@ services:
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:-}
       GOOGLE_PLAY_RTDN_AUDIENCE: ${GOOGLE_PLAY_RTDN_AUDIENCE:-}
       GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT: ${GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT:-}
+      # Limite de requisições (app/services/rate_limit.py), "quantidade/segundos". AUTH e PUBLIC
+      # ficam folgados enquanto o BFF do web não manda o IP do navegador (BFF_SHARED_SECRET);
+      # depois, AUTH volta para 30/600.
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_AUTH_IP: ${RATE_LIMIT_AUTH_IP:-300/600}
+      RATE_LIMIT_PUBLIC_IP: ${RATE_LIMIT_PUBLIC_IP:-1200/60}
+      RATE_LIMIT_CHAT_USER: ${RATE_LIMIT_CHAT_USER:-40/60}
+      RATE_LIMIT_CHAT_IP: ${RATE_LIMIT_CHAT_IP:-120/60}
+      RATE_LIMIT_ATTACHMENTS_USER: ${RATE_LIMIT_ATTACHMENTS_USER:-60/60}
+      RATE_LIMIT_SHOP_CLICK_USER: ${RATE_LIMIT_SHOP_CLICK_USER:-60/60}
+      RATE_LIMIT_SHOP_CLICK_IP: ${RATE_LIMIT_SHOP_CLICK_IP:-300/60}
+      RATE_LIMIT_DEFAULT_USER: ${RATE_LIMIT_DEFAULT_USER:-600/60}
+      RATE_LIMIT_DEFAULT_IP: ${RATE_LIMIT_DEFAULT_IP:-1200/60}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32,::1/128}
+      # Segredo do BFF do web: com ele, X-LetsGrow-Client-IP vira o IP do cliente. Vazio = desligado
+      BFF_SHARED_SECRET: ${BFF_SHARED_SECRET:-}
+      API_DOCS_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy

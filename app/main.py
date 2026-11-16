@@ -2,13 +2,13 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
 from app.config import settings
-from app.web.admin_panel import AI_PANEL_HTML
+from app.services.rate_limit import RateLimitMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +74,21 @@ def create_app() -> FastAPI:
             "**Autenticação:** `Bearer <JWT>` em todos os endpoints protegidos.\n"
             "Endpoints `/admin/*` exigem `X-Admin-Token: <ADMIN_TOKEN>` no header."
         ),
-        docs_url="/api-docs",
-        redoc_url="/api-redoc",
-        openapi_url="/api-docs/openapi.json",
+        # A documentação é o mapa de todas as rotas: só com API_DOCS_ENABLED (desenvolvimento)
+        docs_url="/api-docs" if settings.API_DOCS_ENABLED else None,
+        redoc_url="/api-redoc" if settings.API_DOCS_ENABLED else None,
+        openapi_url="/api-docs/openapi.json" if settings.API_DOCS_ENABLED else None,
         lifespan=lifespan,
     )
+
+    @app.exception_handler(Exception)
+    async def unhandled_error(request: Request, exc: Exception):
+        # Erro sem tratamento: o detalhe fica no log; o cliente recebe uma mensagem genérica
+        logger.exception("Erro sem tratamento em %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Erro interno. Tente de novo em instantes."})
+
+    # Antes do CORS: o 429 também sai com os cabeçalhos de CORS (o último adicionado fica por fora)
+    app.add_middleware(RateLimitMiddleware)
 
     app.add_middleware(
         CORSMiddleware,
@@ -94,16 +104,8 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "ok", "version": settings.APP_VERSION}
 
-    @app.get("/admin/ai-panel", response_class=HTMLResponse, tags=["admin"], include_in_schema=False)
-    async def ai_panel():
-        """
-        Painel HTML mínimo para trocar provider/modelo de IA em runtime —
-        protegido client-side pelo token enviado a /api/v1/admin/ai-config
-        (ver app/web/admin_panel.py e app/api/v1/admin.py). A própria página
-        é pública, mas sem o ADMIN_TOKEN correto nenhuma chamada à API funciona.
-        """
-        return HTMLResponse(content=AI_PANEL_HTML)
-
+    # O antigo /admin/ai-panel (página pública que listava as rotas do admin) saiu: a troca de
+    # provedor e modelo de IA fica no letsgrow-admin, que chama /api/v1/admin/ai-config com o token.
     return app
 
 

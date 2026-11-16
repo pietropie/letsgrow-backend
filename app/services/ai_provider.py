@@ -3,7 +3,7 @@ Camada de abstração sobre provedores de LLM/embeddings.
 
 Objetivo: permitir trocar de provedor (Gemini ↔ Claude ↔ OpenAI) ou de modelo
 em runtime — via app.models.ai_config.AIConfig, editável pelo painel admin em
-/admin/ai-panel — sem precisar alterar código nem fazer redeploy.
+letsgrow-admin (página IA) — sem precisar alterar código nem fazer redeploy.
 
 Cada provedor exige sua própria chave de API configurada no ambiente:
     GOOGLE_API_KEY     → provider "gemini"
