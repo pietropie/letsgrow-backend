@@ -67,6 +67,36 @@ services:
       minio:
         condition: service_healthy
 
+  # Broker MQTT dos Hubs ESP32. Sem anônimo: usuários e ACL no plugin
+  # dynamic-security (/mosquitto/data/dynamic-security.json, no volume).
+  # TLS: o Traefik do Coolify termina mqtts://mqtt.letsgrowapp.com.br:8883
+  # (certificado Let's Encrypt) e repassa para a 1883 daqui pela rede interna.
+  # Exige o entrypoint "mqtts" (:8883) no proxy do Coolify; a 1883 não é publicada.
+  # Usuário de cada Hub: criado pela API em POST /api/v1/iot/hubs/activate
+  # (onboarding por BLE); o do backend é refeito na subida (entrypoint.sh).
+  mosquitto:
+    build:
+      context: .
+      dockerfile: mosquitto/Dockerfile
+    restart: unless-stopped
+    environment:
+      MQTT_BACKEND_PASSWORD: ${SERVICE_PASSWORD_MQTT}
+    volumes:
+      - mosquitto_data:/mosquitto/data
+    labels:
+      - traefik.enable=true
+      - traefik.tcp.routers.letsgrow-mqtt.entrypoints=mqtts
+      - traefik.tcp.routers.letsgrow-mqtt.rule=HostSNI(`mqtt.letsgrowapp.com.br`)
+      - traefik.tcp.routers.letsgrow-mqtt.tls=true
+      - traefik.tcp.routers.letsgrow-mqtt.tls.certresolver=letsencrypt
+      - traefik.tcp.routers.letsgrow-mqtt.service=letsgrow-mqtt
+      - traefik.tcp.services.letsgrow-mqtt.loadbalancer.server.port=1883
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -u letsgrow-backend -P \"$$MQTT_BACKEND_PASSWORD\" -t '$$SYS/broker/uptime' -C 1 -W 5 > /dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+
   api:
     build: .
     restart: unless-stopped
@@ -77,7 +107,11 @@ services:
       SECRET_KEY: ${SERVICE_PASSWORD_64_JWT}
       ADMIN_TOKEN: ${SERVICE_PASSWORD_64_ADMIN}
       DEBUG: "false"
-      MQTT_HOST: ""
+      # Listener MQTT (app/workers/mqtt_listener.py): rede interna, sem TLS.
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_USERNAME: letsgrow-backend
+      MQTT_PASSWORD: ${SERVICE_PASSWORD_MQTT}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${SERVICE_USER_MINIO}
       MINIO_SECRET_KEY: ${SERVICE_PASSWORD_MINIO}
@@ -122,6 +156,9 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      # Só "started": broker fora do ar não pode derrubar a API; o listener reconecta.
+      mosquitto:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
       interval: 15s
@@ -133,3 +170,4 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  mosquitto_data:

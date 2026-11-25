@@ -27,13 +27,19 @@ services:
       timeout: 3s
       retries: 5
 
+  # Mesmo broker da produção (sem anônimo, dynamic-security). Senha só de dev.
+  # Hub de bancada: ative pelo app (BLE) ou crie o usuário com
+  # scripts/mqtt_hub_client.py (usuário = MAC, 12 hex maiúsculos).
   mosquitto:
-    image: eclipse-mosquitto:2
+    build:
+      context: .
+      dockerfile: mosquitto/Dockerfile
+    environment:
+      MQTT_BACKEND_PASSWORD: letsgrow_dev_backend
+    volumes:
+      - mosquitto_data:/mosquitto/data
     ports:
       - "1883:1883"
-      - "9001:9001"
-    volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
 
   minio:
     image: minio/minio
@@ -61,6 +67,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://letsgrow:letsgrow_dev@postgres:5432/letsgrow
       REDIS_URL: redis://redis:6379/0
       MQTT_HOST: mosquitto
+      MQTT_USERNAME: letsgrow-backend
+      MQTT_PASSWORD: letsgrow_dev_backend
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: letsgrow
       MINIO_SECRET_KEY: letsgrow_dev
@@ -80,6 +88,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://letsgrow:letsgrow_dev@postgres:5432/letsgrow
       REDIS_URL: redis://redis:6379/0
       MQTT_HOST: mosquitto
+      MQTT_USERNAME: letsgrow-backend
+      MQTT_PASSWORD: letsgrow_dev_backend
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,3 +102,4 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  mosquitto_data:

@@ -8,21 +8,45 @@ GET    /iot/devices                 List all devices owned by the current user
 POST   /iot/devices                 Manually register a new device.
 GET    /iot/devices/{device_id}     Retrieve a single device.
 PATCH  /iot/devices/{device_id}     Assign / rename a device (confirm pairing).
+                                    Confirming a pending satellite also publishes
+                                    pair_confirm to its Hub.
 DELETE /iot/devices/{device_id}     Remove a device.
-"""
-import uuid
+POST   /iot/devices/{hub_id}/pairing  Open the Hub's satellite pairing window (pair_open).
+POST   /iot/hubs/claim-codes        Claim code for a new Hub (BLE onboarding).
+POST   /iot/hubs/activate           Hub trades the claim code for its MQTT password (no login).
 
-from fastapi import APIRouter, Depends, HTTPException, status
+Contract: side-session note hub-onboarding-ble-contrato.md.
+"""
+import hashlib
+import secrets
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.grow import Grow
 from app.models.plant import Plant
-from app.models.sensor import SensorDevice
+from app.models.sensor import HubClaimCode, SensorDevice
 from app.models.user import User
 from app.schemas.common import MessageResponse
-from app.schemas.sensor import DevicePatch, DeviceRegister, DeviceResponse
+from app.schemas.sensor import (
+    DevicePatch,
+    DeviceRegister,
+    DeviceResponse,
+    HubActivateRequest,
+    HubActivateResponse,
+    HubClaimCodeCreate,
+    HubClaimCodeResponse,
+    HubPairingOpen,
+    HubPairingResponse,
+)
+from app.services import mqtt_broker, rate_limit
 from app.services.auth import get_current_user
 from app.services.subscription import check_sensor_access
 
@@ -73,12 +97,14 @@ async def _get_owned_device(
 
     # Extra ownership check for pending satellites: confirm hub is owned by user
     if not device.is_paired and device.hub_mac:
+        # Hub ativado pelo app fica ligado ao grow (sem planta); o legado, à planta
         hub_result = await db.execute(
             select(SensorDevice)
-            .join(Plant, SensorDevice.plant_id == Plant.id)
+            .outerjoin(Plant, SensorDevice.plant_id == Plant.id)
+            .outerjoin(Grow, SensorDevice.grow_id == Grow.id)
             .where(
                 SensorDevice.esp32_mac == device.hub_mac,
-                Plant.user_id == current_user.id,
+                or_(Plant.user_id == current_user.id, Grow.user_id == current_user.id),
             )
         )
         if not hub_result.scalar_one_or_none():
@@ -280,6 +306,7 @@ async def patch_device(
       4. Backend links device to plant and marks is_paired=True.
     """
     device = await _get_owned_device(device_id, current_user, db)
+    was_pending = not device.is_paired
 
     if body.plant_id is not None:
         plant_result = await db.execute(
@@ -316,6 +343,19 @@ async def patch_device(
     if body.sensors_config is not None:
         device.sensors_config = body.sensors_config
 
+    # Satélite pendente confirmado: avisa o Hub (pair_confirm) antes de gravar,
+    # para o app poder tentar de novo se o broker estiver fora do ar.
+    if was_pending and device.is_paired and device.module_type != "hub" and device.hub_mac:
+        hub = await _hub_by_mac(device.hub_mac, db)
+        hub_mac = mqtt_broker.normalize_mac(hub.esp32_mac) if hub is not None else None
+        if hub is not None and hub.grow_id is not None and hub_mac:
+            command = {"cmd": "pair_confirm", "mac": mqtt_broker.normalize_mac(device.esp32_mac) or device.esp32_mac}
+            try:
+                await mqtt_broker.publish_hub_command(hub.grow_id, hub_mac, command)
+            except mqtt_broker.BrokerUnavailable:
+                await db.rollback()
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="broker_unavailable")
+
     await db.commit()
     await db.refresh(device)
     return _device_to_response(device)
@@ -335,3 +375,194 @@ async def delete_device(
     await db.delete(device)
     await db.commit()
     return MessageResponse(message="Dispositivo removido")
+
+
+# ---------------------------------------------------------------------------
+# Hub: comandos MQTT e onboarding por BLE
+# ---------------------------------------------------------------------------
+
+CLAIM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+CLAIM_CODE_LENGTH = 8
+CLAIM_CODE_TTL = timedelta(minutes=15)
+
+
+def _hash_code(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
+def _new_claim_code() -> str:
+    return "".join(secrets.choice(CLAIM_CODE_ALPHABET) for _ in range(CLAIM_CODE_LENGTH))
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+async def _hub_by_mac(hub_mac: str, db: AsyncSession) -> SensorDevice | None:
+    """Hub pelo MAC, aceitando o formato legado com ':'."""
+    mac = mqtt_broker.normalize_mac(hub_mac)
+    candidates = {hub_mac, hub_mac.upper()}
+    if mac:
+        candidates |= {mac, ":".join(mac[i:i + 2] for i in range(0, 12, 2))}
+    return (
+        await db.execute(
+            select(SensorDevice).where(SensorDevice.esp32_mac.in_(candidates)).limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+@router.post("/devices/{hub_id}/pairing", response_model=HubPairingResponse)
+async def open_hub_pairing(
+    hub_id: uuid.UUID,
+    body: HubPairingOpen | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Abre a janela de pareamento de satélites do Hub (publica pair_open no cmd dele)."""
+    ttl_s = (body or HubPairingOpen()).ttl_s
+    hub = (
+        await db.execute(
+            select(SensorDevice)
+            .join(Grow, SensorDevice.grow_id == Grow.id)
+            .where(SensorDevice.id == hub_id, Grow.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
+    if hub is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dispositivo nao encontrado")
+    mac = mqtt_broker.normalize_mac(hub.esp32_mac)
+    if hub.module_type != "hub" or mac is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Dispositivo nao e um Hub")
+    try:
+        await mqtt_broker.publish_hub_command(hub.grow_id, mac, {"cmd": "pair_open", "ttl_s": ttl_s})
+    except mqtt_broker.BrokerUnavailable:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="broker_unavailable")
+    return HubPairingResponse(
+        hub_id=hub.id,
+        ttl_s=ttl_s,
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_s),
+    )
+
+
+@router.post("/hubs/claim-codes", response_model=HubClaimCodeResponse, status_code=status.HTTP_201_CREATED)
+async def create_hub_claim_code(
+    body: HubClaimCodeCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Código de vínculo (8 chars, 15 min, uso único) que o app manda ao Hub por BLE."""
+    check_sensor_access(current_user)
+    grow = (
+        await db.execute(select(Grow).where(Grow.id == body.grow_id, Grow.user_id == current_user.id))
+    ).scalar_one_or_none()
+    if grow is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
+
+    expires_at = datetime.now(timezone.utc) + CLAIM_CODE_TTL
+    for _ in range(5):  # 32^8 combinações: colisão é quase impossível, mas o hash é único
+        code = _new_claim_code()
+        code_hash = _hash_code(code)
+        taken = (
+            await db.execute(select(HubClaimCode.id).where(HubClaimCode.code_hash == code_hash))
+        ).scalar_one_or_none()
+        if taken is None:
+            break
+    else:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Tente de novo")
+
+    db.add(HubClaimCode(code_hash=code_hash, user_id=current_user.id, grow_id=grow.id, expires_at=expires_at))
+    await db.commit()
+    return HubClaimCodeResponse(code=code, expires_at=expires_at)
+
+
+async def _activation_wait(ip: str, mac: str | None) -> int | None:
+    """Conta a tentativa de ativação por IP e por MAC; devolve os segundos de espera se estourou."""
+    if not settings.RATE_LIMIT_ENABLED:
+        return None
+    now = time.time()
+    checks = [("ip", ip, rate_limit.parse_rule(settings.RATE_LIMIT_HUB_ACTIVATE_IP))]
+    if mac:
+        checks.append(("mac", mac, rate_limit.parse_rule(settings.RATE_LIMIT_HUB_ACTIVATE_MAC)))
+    wait = None
+    for kind, subject, rule in checks:
+        window = int(now // rule.seconds)
+        count = await rate_limit._hit(f"rl:hub_activate:{kind}:{subject}:{rule.seconds}:{window}", rule.seconds, now)
+        if count > rule.count:
+            wait = max(wait or 0, rule.seconds - int(now % rule.seconds))
+    return wait
+
+
+def _error(code: int, detail: str, headers: dict | None = None) -> JSONResponse:
+    return JSONResponse(status_code=code, content={"detail": detail}, headers=headers)
+
+
+@router.post("/hubs/activate", response_model=HubActivateResponse)
+async def activate_hub(
+    body: HubActivateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Chamado pelo Hub (HTTPS, sem login): troca o código de vínculo pela senha MQTT.
+
+    Erros: 400 bad_request | code_invalid, 410 code_expired, 429 too_many_attempts,
+    503 broker_unavailable (o código não é consumido; o Hub pode tentar de novo).
+    """
+    mac = mqtt_broker.normalize_mac(body.mac)
+    headers = request.headers
+    ip = rate_limit.client_ip(
+        request.client.host if request.client else None,
+        headers.get("x-forwarded-for"),
+        headers.get("x-letsgrow-bff-key"),
+        headers.get("x-letsgrow-client-ip"),
+    )
+    wait = await _activation_wait(ip, mac)
+    if wait is not None:
+        return _error(429, "too_many_attempts", {"Retry-After": str(wait)})
+
+    code = (body.code or "").strip().upper()
+    if mac is None or len(code) != CLAIM_CODE_LENGTH:
+        return _error(400, "bad_request")
+    if any(ch not in CLAIM_CODE_ALPHABET for ch in code):
+        return _error(400, "code_invalid")
+
+    claim = (
+        await db.execute(
+            select(HubClaimCode).where(HubClaimCode.code_hash == _hash_code(code)).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if claim is None or claim.used_at is not None:
+        return _error(400, "code_invalid")
+    now = datetime.now(timezone.utc)
+    if _aware(claim.expires_at) <= now:
+        return _error(410, "code_expired")
+
+    device = await _hub_by_mac(mac, db)
+    if device is None:
+        device = SensorDevice(name=f"Hub {mac[-4:]}", esp32_mac=mac, sensors_config={})
+        db.add(device)
+    elif device.grow_id != claim.grow_id:
+        # Hub mudou de grow/dono: a planta antiga não vale mais
+        device.plant_id = None
+    device.esp32_mac = mac
+    device.grow_id = claim.grow_id
+    device.module_type = "hub"
+    device.hub_mac = None
+    device.is_paired = True
+    if body.fw:
+        device.firmware_version = body.fw[:20]
+
+    password = mqtt_broker.generate_mqtt_password()
+    try:
+        await mqtt_broker.upsert_hub_client(mac, claim.grow_id, password)
+    except mqtt_broker.BrokerUnavailable:
+        await db.rollback()
+        return _error(503, "broker_unavailable")
+
+    claim.used_at = now
+    claim.used_by_mac = mac
+    await db.commit()
+    return HubActivateResponse(
+        grow_id=claim.grow_id,
+        mqtt_password=password,
+        mqtt_host=settings.MQTT_PUBLIC_HOST,
+        mqtt_port=settings.MQTT_PUBLIC_PORT,
+    )

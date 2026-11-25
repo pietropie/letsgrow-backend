@@ -34,12 +34,15 @@ services:
     networks:
       - letsgrow_net
 
+  # Sem anônimo: ver mosquitto.conf e mosquitto/entrypoint.sh (dynamic-security).
+  # A 1883 publicada exige login; para TLS use o docker-compose.coolify.yml.
   mosquitto:
-    image: eclipse-mosquitto:2
+    build:
+      context: .
+      dockerfile: mosquitto/Dockerfile
     restart: unless-stopped
-    configs:
-      - source: mosquitto_config
-        target: /mosquitto/config/mosquitto.conf
+    environment:
+      MQTT_BACKEND_PASSWORD: ${MQTT_BACKEND_PASSWORD:?}
     volumes:
       - mosquitto_data:/mosquitto/data
     ports:
@@ -72,6 +75,8 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
+      MQTT_USERNAME: letsgrow-backend
+      MQTT_PASSWORD: ${MQTT_BACKEND_PASSWORD:?}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
@@ -113,16 +118,6 @@ services:
         condition: service_healthy
     networks:
       - letsgrow_net
-
-configs:
-  mosquitto_config:
-    content: |
-      listener 1883
-      allow_anonymous true
-
-      listener 9001
-      protocol websockets
-      allow_anonymous true
 
 volumes:
   postgres_data:

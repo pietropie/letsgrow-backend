@@ -85,6 +85,12 @@ class Settings(BaseSettings):
     MQTT_PORT: int = 1883
     MQTT_USERNAME: str = ""
     MQTT_PASSWORD: str = ""
+    # Endereço do broker que o Hub usa (TLS no Traefik), devolvido em POST /iot/hubs/activate
+    MQTT_PUBLIC_HOST: str = "mqtt.letsgrowapp.com.br"
+    MQTT_PUBLIC_PORT: int = 8883
+    # Ativação do Hub (sem login; o código de vínculo é a prova): tentativas por IP e por MAC
+    RATE_LIMIT_HUB_ACTIVATE_IP: str = "20/600"
+    RATE_LIMIT_HUB_ACTIVATE_MAC: str = "10/600"
 
     # MinIO
     # MINIO_ENDPOINT é o host usado pelo backend para FALAR com o MinIO

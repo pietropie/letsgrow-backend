@@ -35,3 +35,5 @@ O ambiente `.venv-test` precisou de `aiosqlite`, `alembic`, `apscheduler`, `rese
 - Google Play: verificação, acknowledge, compra de outra conta, produto desconhecido, troca com `linkedPurchaseToken`, RTDN autenticada e idempotente, revogação, `on_hold`, consumo de créditos e reembolso anulado.
 
 Total atual: 195 testes.
+
+`test_hub_onboarding.py` cobre o onboarding do Hub por BLE com o broker simulado: código de vínculo (formato, 15 min, só o hash no banco, grow de outra conta), ativação (senha MQTT, Hub no `GET /iot/devices`, reuso, expirado, formato inválido, reativação trocando senha e grow, broker fora do ar sem consumir o código, limite por MAC), `pair_open` e `pair_confirm`, e os comandos do dynamic-security (ACL do contrato, erros ignorados só nos deletes). Total atual: 334 testes.

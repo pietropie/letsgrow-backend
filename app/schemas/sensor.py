@@ -92,3 +92,42 @@ class SensorSummary(BaseModel):
     avg_vpd_24h: float | None
     avg_co2_24h: float | None
     alerts: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Onboarding do Hub por BLE (contrato hub-onboarding-ble)
+# ---------------------------------------------------------------------------
+
+class HubClaimCodeCreate(BaseModel):
+    grow_id: uuid.UUID
+
+
+class HubClaimCodeResponse(BaseModel):
+    code: str
+    expires_at: datetime
+
+
+class HubActivateRequest(BaseModel):
+    """Enviado pelo próprio Hub. Campos soltos de propósito: formato inválido
+    responde 400 {"detail": "bad_request"} (o firmware mostra esse erro), não 422."""
+
+    mac: str = ""
+    code: str = ""
+    fw: str | None = None
+
+
+class HubActivateResponse(BaseModel):
+    grow_id: uuid.UUID
+    mqtt_password: str
+    mqtt_host: str
+    mqtt_port: int
+
+
+class HubPairingOpen(BaseModel):
+    ttl_s: int = Field(default=60, ge=10, le=300)
+
+
+class HubPairingResponse(BaseModel):
+    hub_id: uuid.UUID
+    ttl_s: int
+    expires_at: datetime
