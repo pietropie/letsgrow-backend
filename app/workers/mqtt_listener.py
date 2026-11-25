@@ -12,6 +12,10 @@ Subscribed topics
    in pairing mode.
    Topic format: letsgrow/{grow_id}/hub/{hub_mac}/discovery
 
+3. letsgrow/+/+/status (retained, LWT) and letsgrow/+/+/relay/+ (ack, config_ack, event)
+   Hub status and relays: letsgrow/{grow_id}/LG-{MAC}/... (contract: letsgrow-firmware/hub/RELAYS.md).
+   Handled by app/services/relays.py; the grow in the topic must be the Hub's grow.
+
 Telemetry payload (JSON):
 {
   "device_mac": "AA:BB:CC:DD:EE:FF",   # optional -- overrides topic segment
@@ -49,12 +53,20 @@ import aiomqtt
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.sensor import SensorDevice, SensorReading
+from app.services import mqtt_broker, relays, sensor_catalog
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
 TOPIC_TELEMETRY = "letsgrow/+/+/telemetry"
 TOPIC_DISCOVERY = "letsgrow/+/hub/+/discovery"
+TOPIC_STATUS = "letsgrow/+/+/status"
+TOPIC_RELAY = "letsgrow/+/+/relay/+"
+RELAY_HANDLERS = {
+    "ack": relays.handle_ack,
+    "config_ack": relays.handle_config_ack,
+    "event": relays.handle_event,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -127,15 +139,19 @@ async def _handle_discovery(hub_mac: str, payload: dict, grow_id: uuid.UUID | No
             )
             return
 
+        config = payload.get("sensors_config") or {}
+        kind = sensor_catalog.kind_from_config("satellite", config)
+        meta = sensor_catalog.KINDS.get(kind) if kind else None
         device = SensorDevice(
-            # name is a placeholder until the grower assigns a real name
-            name=f"Satellite {satellite_mac}",
+            # Nome provisório pelo tipo (sem MAC na tela) até o grower dar um nome
+            name=meta.default_name if meta else "Satélite novo",
+            sensor_kind=kind,
             esp32_mac=satellite_mac,
             grow_id=grow_id,
             module_type="satellite",
             hub_mac=hub_mac.upper(),
             is_paired=False,
-            sensors_config=payload.get("sensors_config") or {},
+            sensors_config=config,
             firmware_version=payload.get("firmware_version"),
             is_online=True,
             last_seen_at=datetime.now(timezone.utc),
@@ -149,6 +165,34 @@ async def _handle_discovery(hub_mac: str, payload: dict, grow_id: uuid.UUID | No
             device.id,
             hub_mac,
         )
+
+
+# ---------------------------------------------------------------------------
+# Hub: status e relés
+# ---------------------------------------------------------------------------
+
+async def _handle_hub_message(grow_segment: str, serial: str, kind: str, payload: dict) -> None:
+    """kind = "status" ou o subtópico de relay/ (ack, config_ack, event)."""
+    if not serial.startswith("LG-"):
+        return
+    mac = mqtt_broker.normalize_mac(serial[3:])
+    if mac is None:
+        return
+    async with AsyncSessionLocal() as db:
+        hub = (await db.execute(
+            select(SensorDevice).where(SensorDevice.esp32_mac == mac, SensorDevice.module_type == "hub")
+        )).scalar_one_or_none()
+        if hub is None or str(hub.grow_id) != grow_segment:
+            logger.debug("Hub message for unknown hub/grow: %s %s", serial, grow_segment)
+            return
+        if kind == "status":
+            await relays.handle_status(db, hub, payload)
+        else:
+            handler = RELAY_HANDLERS.get(kind)
+            if handler is None:
+                return
+            await handler(db, hub, payload)
+        await db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -171,11 +215,15 @@ async def run_mqtt_listener() -> None:
                 )
                 await client.subscribe(TOPIC_TELEMETRY)
                 await client.subscribe(TOPIC_DISCOVERY)
+                await client.subscribe(TOPIC_STATUS, qos=1)
+                await client.subscribe(TOPIC_RELAY, qos=1)
 
                 async for message in client.messages:
                     topic = str(message.topic)
                     parts = topic.split("/")
 
+                    if not message.payload:
+                        continue  # retido apagado
                     try:
                         payload = json.loads(message.payload)
                     except Exception as exc:
@@ -203,6 +251,14 @@ async def run_mqtt_listener() -> None:
                         elif len(parts) == 4 and parts[3] == "telemetry":
                             mac = parts[2]
                             await _handle_telemetry(mac, payload)
+
+                        # letsgrow/{grow_id}/LG-{MAC}/status           -> 4 parts
+                        elif len(parts) == 4 and parts[3] == "status" and isinstance(payload, dict):
+                            await _handle_hub_message(parts[1], parts[2], "status", payload)
+
+                        # letsgrow/{grow_id}/LG-{MAC}/relay/{sub}      -> 5 parts
+                        elif len(parts) == 5 and parts[3] == "relay" and isinstance(payload, dict):
+                            await _handle_hub_message(parts[1], parts[2], parts[4], payload)
 
                         else:
                             logger.debug("Unhandled MQTT topic: %s", topic)

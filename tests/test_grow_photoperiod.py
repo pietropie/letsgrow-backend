@@ -16,7 +16,7 @@ from app.database import get_db
 from app.models.base import Base
 from app.models.pot import Pot
 from app.models.grow import Grow
-from app.models.sensor import SensorDevice, SensorReading
+from app.models.sensor import HubRelay, SensorDevice, SensorReading
 from app.services.auth import get_current_user
 from app.services.photoperiod import format_photoperiod, minutes_from_hours_text
 
@@ -37,7 +37,7 @@ class PhotoperiodTests(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.addCleanup(self.fixture.tearDown)
         self.session = self.fixture.session
-        Base.metadata.create_all(self.fixture.engine, tables=[SensorDevice.__table__, SensorReading.__table__, Pot.__table__])
+        Base.metadata.create_all(self.fixture.engine, tables=[SensorDevice.__table__, SensorReading.__table__, Pot.__table__, HubRelay.__table__])
         app = FastAPI()
         app.include_router(grows.router, prefix='/grows')
         app.dependency_overrides[get_current_user] = lambda: self.fixture.user

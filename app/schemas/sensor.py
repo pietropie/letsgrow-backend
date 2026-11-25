@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DeviceRegister(BaseModel):
@@ -41,6 +41,10 @@ class DevicePatch(BaseModel):
     )
     module_type: Literal["hub", "satellite", "standalone"] | None = None
     sensors_config: dict | None = None
+    # Tipo legível do satélite (para aparelhos antigos sem module_type no sensors_config)
+    sensor_kind: Literal["air", "soil", "light", "solution", "relay", "co2", "ph", "root"] | None = None
+    # Hub: tensão da tomada (127 ou 220); null volta a "não informada" (conta como 127)
+    mains_voltage: Literal[127, 220] | None = None
 
 
 class DeviceResponse(BaseModel):
@@ -55,6 +59,14 @@ class DeviceResponse(BaseModel):
     module_type: str | None
     hub_mac: str | None
     is_paired: bool
+    # Tipo legível: air | soil | light | solution | relay | hub (null: ainda sem tipo conhecido)
+    sensor_kind: str | None = None
+    kind_label: str | None = None
+    description: str | None = None
+    icon: str | None = None
+    # Foto do modelo do sensor; null = o app mostra o ícone do tipo
+    photo_url: str | None = None
+    mains_voltage: int | None = None
     # Status
     is_online: bool
     last_seen_at: datetime | None
@@ -80,8 +92,16 @@ class SensorReadingCreate(BaseModel):
 
 class SensorReadingResponse(SensorReadingCreate):
     id: uuid.UUID
+    # Calculado do EC na escala 500 (ppm = EC em mS/cm × 500)
+    ppm: int | None = None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def _ppm(self):
+        if self.ppm is None and self.ec_ms_cm is not None:
+            self.ppm = round(self.ec_ms_cm * 500)
+        return self
 
 
 class SensorSummary(BaseModel):

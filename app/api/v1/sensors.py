@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,10 @@ from app.models.plant import Plant
 from app.models.sensor import SensorDevice, SensorReading
 from app.models.user import User
 from app.schemas.sensor import SensorReadingResponse, SensorSummary
+from app.schemas.sensor_panel import SensorHistoryOut
+from app.services import ideal_ranges as ranges
+from app.services import sensor_catalog as catalog
+from app.services import sensor_panel
 from app.services.auth import get_current_user
 
 router = APIRouter()
@@ -130,3 +136,36 @@ async def sensor_summary(
         avg_co2_24h=round(avgs[3]) if avgs[3] else None,
         alerts=alerts,
     )
+
+
+HistoryMetric = Literal["temp_air", "humidity_air", "vpd_kpa", "lux", "soil_moisture_pct", "ppm", "ec_ms_cm",
+                        "co2_ppm", "ph_solution", "temp_root"]
+
+
+@router.get("/{device_id}/history", response_model=SensorHistoryOut)
+async def sensor_history(
+    device_id: uuid.UUID,
+    metric: HistoryMetric,
+    window: Literal["24h", "3d", "7d"] = Query(default="24h"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Leituras agregadas para o mini-histórico: 24 h em 24 barras de 1 h, 3 dias em 18 de
+    4 h e 7 dias em 14 de 12 h. Cada barra traz média, mínimo, máximo e o estado da média
+    em relação à faixa ideal (a do ambiente ou a sugerida pela fase)."""
+    device = await _get_device_or_404(device_id, current_user.id, db)
+    now = datetime.now(timezone.utc)
+    grow_id = device.grow_id
+    plant = await db.get(Plant, device.plant_id) if device.plant_id else None
+    if grow_id is None and plant is not None:
+        grow_id = plant.grow_id
+    band = None
+    if grow_id is not None and metric in ranges.RANGE_METRICS:
+        phase, _ = await sensor_panel.grow_phase(db, grow_id)
+        if plant is not None and plant.current_phase not in (None, "unknown"):
+            phase = plant.current_phase
+        band = ranges.effective(metric, phase, await sensor_panel.custom_ranges(db, grow_id))
+    readings = await sensor_panel.readings_since(db, device_id, now - sensor_panel.WINDOWS[window][0])
+    data = sensor_panel.aggregate(readings, metric, window, now, band)
+    return {**data, "device_id": device_id, "unit": catalog.METRICS[metric].unit,
+            "range": sensor_panel.range_out(band)}

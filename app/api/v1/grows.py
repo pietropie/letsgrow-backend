@@ -26,6 +26,7 @@ from app.services.auth import get_current_user
 from app.services.grow_env import latest_grow_env
 from app.services.home_suggestions import grow_next_action, load_plant_context
 from app.services.photoperiod import apply_photoperiod
+from app.services.relays import normalize_fans, sync_grow_relays
 from app.services.subscription import check_grow_limit, check_plant_limit
 
 router = APIRouter()
@@ -125,6 +126,7 @@ async def create_grow(
                    if k in body.model_fields_set}
     for k in ('photoperiod_hours', 'photoperiod_on_at', 'photoperiod_light_minutes'):
         data.pop(k, None)
+    data["fans"] = normalize_fans(data.get("fans"))
     grow = Grow(user_id=current_user.id, **data)
     apply_photoperiod(grow, photoperiod)
     db.add(grow)
@@ -181,6 +183,10 @@ async def update_grow(
     new_status = changes.pop("status", None)
     if "lat" in changes and changes["lat"] is None:
         changes["location_label"] = None
+    # Ventiladores ganham id estavel (vinculo com a posicao do rele do Hub)
+    if "fans" in changes:
+        changes["fans"] = normalize_fans(changes["fans"], grow.fans)
+    schedule_before = (grow.photoperiod_on_at, grow.photoperiod_light_minutes)
     # Programacao de luz: duracao em minutos, texto derivado e compatibilidade com "N/M".
     apply_photoperiod(grow, changes)
     for field, value in changes.items():
@@ -201,6 +207,10 @@ async def update_grow(
             notes=f"Potência do exaustor {verb} {body.exhaust_power_pct}%",
             kind="exhaust_power", created_at=now, updated_at=now,
         ))
+    # Reles do Hub: solta posicoes cujo equipamento saiu e republica a programacao da luz
+    schedule_changed = schedule_before != (grow.photoperiod_on_at, grow.photoperiod_light_minutes)
+    if schedule_changed or {"fans", "light_type", "exhaust_type"} & changes.keys():
+        await sync_grow_relays(db, grow, schedule_changed=schedule_changed)
     await db.commit()
     await db.refresh(grow)
     return _grow_response(grow, await latest_grow_env(db, grow.id))
@@ -282,3 +292,9 @@ async def restore_grow(
         message="Ambiente restaurado com sucesso", grow_id=grow.id, status=grow.status,
         archived_at=grow.archived_at, plants_affected=restored,
     )
+
+
+# Faixas ideais do ambiente (/grows/{grow_id}/ideal-ranges)
+from app.api.v1 import ideal_ranges as _ideal_ranges  # noqa: E402
+
+router.include_router(_ideal_ranges.router)

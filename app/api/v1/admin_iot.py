@@ -5,6 +5,8 @@ Routes
 ------
 POST /admin/iot/simulate-discovery   Simula a descoberta de um satellite pelo hub,
                                      criando um SensorDevice pendente sem hardware fisico.
+GET  /admin/iot/sensor-models        Fotos por modelo de sensor (catálogo de hardware)
+PUT  /admin/iot/sensor-models/{key}  Cria ou altera a foto/nome de um modelo
 GET  /admin/iot/devices              Lista todos os SensorDevices do sistema (todos os grows),
                                      com paginacao simples.
 
@@ -22,7 +24,8 @@ from app.api.v1.admin import require_admin_token
 from app.database import get_db
 from app.models.grow import Grow
 from app.models.plant import Plant
-from app.models.sensor import SensorDevice
+from app.models.sensor import SensorDevice, SensorModel
+from app.schemas.sensor_panel import SensorModelOut, SensorModelPut
 
 router = APIRouter()
 
@@ -243,3 +246,35 @@ async def list_all_devices(
         _to_admin_response(device, grow_id)
         for device, grow_id in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Fotos por modelo de sensor (UX item 28)
+# ---------------------------------------------------------------------------
+
+@router.get("/iot/sensor-models", response_model=list[SensorModelOut], dependencies=[Depends(require_admin_token)])
+async def list_sensor_models(db: AsyncSession = Depends(get_db)):
+    """Chave = sensors_config.model do aparelho ou o module_type do firmware (solo, ambiente,
+    ppfd, nutricao, automacao) e "hub". Sem foto: o app mostra o ícone do tipo."""
+    return (await db.execute(select(SensorModel).order_by(SensorModel.key))).scalars().all()
+
+
+@router.put("/iot/sensor-models/{key}", response_model=SensorModelOut, dependencies=[Depends(require_admin_token)])
+async def put_sensor_model(key: str, body: SensorModelPut, db: AsyncSession = Depends(get_db)):
+    key = key.strip().lower()
+    if not key or len(key) > 40:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Chave inválida")
+    model = await db.get(SensorModel, key)
+    if model is None:
+        model = SensorModel(key=key, name=body.name or key)
+        db.add(model)
+    fields = body.model_fields_set
+    if body.name is not None:
+        model.name = body.name
+    if "sensor_kind" in fields:
+        model.sensor_kind = body.sensor_kind
+    if "photo_url" in fields:
+        model.photo_url = body.photo_url or None
+    await db.commit()
+    await db.refresh(model)
+    return model

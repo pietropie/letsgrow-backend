@@ -9,7 +9,7 @@ from app.api.v1 import grows
 from app.database import get_db
 from app.models.base import Base
 from app.models.grow import Grow
-from app.models.sensor import SensorDevice, SensorReading
+from app.models.sensor import HubRelay, SensorDevice, SensorReading
 from app.services.auth import get_current_user
 
 
@@ -20,7 +20,7 @@ class GrowPatchNullTests(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.addCleanup(self.fixture.tearDown)
         self.session = self.fixture.session
-        Base.metadata.create_all(self.fixture.engine, tables=[SensorDevice.__table__, SensorReading.__table__])
+        Base.metadata.create_all(self.fixture.engine, tables=[SensorDevice.__table__, SensorReading.__table__, HubRelay.__table__])
         app = FastAPI()
         app.include_router(grows.router, prefix='/grows')
         app.dependency_overrides[get_current_user] = lambda: self.fixture.user
@@ -52,7 +52,9 @@ class GrowPatchNullTests(unittest.TestCase):
         self.assertEqual(g.name, 'Sala nova')
         self.assertEqual((g.carbon_filter, g.dehumidifier, g.exhaust_cfm, g.target_temp_c, g.notes, g.exhaust_power_pct),
                          (True, False, 400, 24.5, 'Sala do fundo', 50))
-        self.assertEqual(g.fans, [{'location': 'copa', 'watts': 25}])
+        # O servidor dá um id estável a cada ventilador (vínculo com o relé do Hub)
+        self.assertEqual([{k: v for k, v in f.items() if k != 'id'} for f in g.fans], [{'location': 'copa', 'watts': 25}])
+        self.assertTrue(all(f.get('id') for f in g.fans))
 
     def test_null_on_required_fields_is_rejected_and_nothing_changes(self):
         for field in ('name', 'grow_type', 'status', 'has_environment_sensors', 'exhaust_power_pct'):

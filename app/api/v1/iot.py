@@ -14,6 +14,8 @@ DELETE /iot/devices/{device_id}     Remove a device.
 POST   /iot/devices/{hub_id}/pairing  Open the Hub's satellite pairing window (pair_open).
 POST   /iot/hubs/claim-codes        Claim code for a new Hub (BLE onboarding).
 POST   /iot/hubs/activate           Hub trades the claim code for its MQTT password (no login).
+GET    /iot/grows/{grow_id}/sensors Sensors screen: Hub, cards with ideal ranges and mini history.
+Relays (app/api/v1/relays.py): /iot/devices/{hub_id}/relays..., /iot/relay-commands/{req_id}.
 
 Contract: side-session note hub-onboarding-ble-contrato.md.
 """
@@ -46,7 +48,10 @@ from app.schemas.sensor import (
     HubPairingOpen,
     HubPairingResponse,
 )
-from app.services import mqtt_broker, rate_limit
+from app.services import mqtt_broker, rate_limit, sensor_catalog
+from app.services import relays as relay_svc
+from app.services import sensor_panel
+from app.schemas.sensor_panel import SensorPanelOut
 from app.services.auth import get_current_user
 from app.services.subscription import check_sensor_access
 
@@ -120,9 +125,19 @@ async def _get_owned_device(
 # GET /iot/devices
 # ---------------------------------------------------------------------------
 
-def _device_to_response(device: SensorDevice, grow_id: uuid.UUID | None = None) -> DeviceResponse:
+def _device_to_response(
+    device: SensorDevice, grow_id: uuid.UUID | None = None, photos: dict[str, str] | None = None
+) -> DeviceResponse:
     """Build DeviceResponse. grow_id stored on the device, with plant fallback."""
+    kind = sensor_catalog.device_kind(device)
+    meta = sensor_catalog.KINDS.get(kind) if kind else None
     return DeviceResponse(
+        sensor_kind=kind,
+        kind_label=meta.label if meta else None,
+        description=meta.description if meta else None,
+        icon=meta.icon if meta else None,
+        photo_url=sensor_panel.photo_for(device, photos or {}),
+        mains_voltage=device.mains_voltage,
         id=device.id,
         plant_id=device.plant_id,
         grow_id=grow_id if grow_id is not None else device.grow_id,
@@ -179,7 +194,8 @@ async def list_devices(
         paired_q = paired_q.where(SensorDevice.is_paired.is_(True))
 
     paired_rows = (await db.execute(paired_q.order_by(SensorDevice.created_at.desc()))).scalars().all()
-    paired_devices = [_device_to_response(d) for d in paired_rows]
+    photos = await sensor_panel.photo_urls(db)
+    paired_devices = [_device_to_response(d, photos=photos) for d in paired_rows]
 
     if paired_only:
         return paired_devices
@@ -201,7 +217,7 @@ async def list_devices(
             )
         ).scalars().all()
         # Pending devices don't have a plant yet → grow_id is None
-        pending_devices = [_device_to_response(d, None) for d in pending_rows]
+        pending_devices = [_device_to_response(d, None, photos) for d in pending_rows]
 
     return paired_devices + pending_devices
 
@@ -280,7 +296,7 @@ async def get_device(
     db: AsyncSession = Depends(get_db),
 ):
     device = await _get_owned_device(device_id, current_user, db)
-    return _device_to_response(device)
+    return _device_to_response(device, photos=await sensor_panel.photo_urls(db))
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +359,14 @@ async def patch_device(
     if body.sensors_config is not None:
         device.sensors_config = body.sensors_config
 
+    if "sensor_kind" in body.model_fields_set:
+        device.sensor_kind = body.sensor_kind
+
+    if "mains_voltage" in body.model_fields_set:
+        if device.module_type != "hub":
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="mains_voltage_hub_only")
+        device.mains_voltage = body.mains_voltage
+
     # Satélite pendente confirmado: avisa o Hub (pair_confirm) antes de gravar,
     # para o app poder tentar de novo se o broker estiver fora do ar.
     if was_pending and device.is_paired and device.module_type != "hub" and device.hub_mac:
@@ -372,6 +396,8 @@ async def delete_device(
     db: AsyncSession = Depends(get_db),
 ):
     device = await _get_owned_device(device_id, current_user, db)
+    if device.module_type == "hub":
+        await relay_svc.detach_hub(db, device, device.grow_id)
     await db.delete(device)
     await db.commit()
     return MessageResponse(message="Dispositivo removido")
@@ -540,8 +566,9 @@ async def activate_hub(
         device = SensorDevice(name=f"Hub {mac[-4:]}", esp32_mac=mac, sensors_config={})
         db.add(device)
     elif device.grow_id != claim.grow_id:
-        # Hub mudou de grow/dono: a planta antiga não vale mais
+        # Hub mudou de grow/dono: a planta antiga e os relés do ambiente antigo não valem mais
         device.plant_id = None
+        await relay_svc.detach_hub(db, device, device.grow_id)
     device.esp32_mac = mac
     device.grow_id = claim.grow_id
     device.module_type = "hub"
@@ -566,3 +593,29 @@ async def activate_hub(
         mqtt_host=settings.MQTT_PUBLIC_HOST,
         mqtt_port=settings.MQTT_PUBLIC_PORT,
     )
+
+
+# ---------------------------------------------------------------------------
+# Tela de Sensores do ambiente (UX item 28)
+# ---------------------------------------------------------------------------
+
+@router.get("/grows/{grow_id}/sensors", response_model=SensorPanelOut)
+async def grow_sensors(
+    grow_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Hub e um cartão por tipo medido, com a leitura avaliada contra a faixa ideal
+    (fora da faixa primeiro), "fora da faixa desde" e o mini-histórico do tipo."""
+    grow = (
+        await db.execute(select(Grow).where(Grow.id == grow_id, Grow.user_id == current_user.id))
+    ).scalar_one_or_none()
+    if grow is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ambiente não encontrado")
+    return await sensor_panel.build_panel(db, grow)
+
+
+# Relés do Hub (/iot/devices/{hub_id}/relays..., /iot/relay-commands/{req_id})
+from app.api.v1 import relays as _relays  # noqa: E402
+
+router.include_router(_relays.router)

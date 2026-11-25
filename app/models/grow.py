@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime, time
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, Time
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, Time, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -56,13 +56,16 @@ class Grow(Base, TimestampMixin):
     # registro: o app nao comanda o exaustor (nao ha MQTT de saida).
     exhaust_power_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
     exhaust_power_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Potência elétrica do exaustor (W), para o aviso de carga dos relés do Hub
+    exhaust_watts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # copa | base
     carbon_filter: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # active_fan | passive | none
     intake_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     internal_circulation_fans: Mapped[int | None] = mapped_column(Integer, nullable=True)
     negative_pressure: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    # [{location: "copa"|"base", watts: 25, on: true}]
+    # [{id: "a1b2c3d4", location: "copa"|"base", watts: 25, qty: 1, on: true}]
+    # id estável (gerado pelo servidor) para o vínculo com a posição do relé
     fans: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
 
     # --- Controle climático ---
@@ -100,3 +103,20 @@ class Grow(Base, TimestampMixin):
     pots = relationship("Pot", back_populates="grow", cascade="all, delete-orphan", order_by="Pot.position")
     sensor_devices = relationship("SensorDevice", back_populates="grow")
     conversations = relationship("AIConversation", back_populates="grow")
+
+
+class GrowIdealRange(Base, TimestampMixin):
+    """Faixa ideal ajustada pelo usuário no ambiente; vale para todas as fases e tem
+    prioridade sobre a sugerida (app/services/ideal_ranges.py)."""
+
+    __tablename__ = "grow_ideal_ranges"
+    __table_args__ = (UniqueConstraint("grow_id", "metric", name="uq_grow_ideal_ranges_grow_metric"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    grow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # temp_air | humidity_air | vpd_kpa | lux | soil_moisture_pct | ppm (EC acompanha o PPM)
+    metric: Mapped[str] = mapped_column(String(30), nullable=False)
+    min_value: Mapped[float] = mapped_column(Float, nullable=False)
+    max_value: Mapped[float] = mapped_column(Float, nullable=False)

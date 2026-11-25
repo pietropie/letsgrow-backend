@@ -68,6 +68,8 @@ class GrowCreate(_LocationFields):
     light_leak_controlled: bool | None = None
     exhaust_type: str | None = None
     exhaust_cfm: int | None = None
+    # Potência elétrica do exaustor (W), para o aviso de carga dos relés do Hub
+    exhaust_watts: int | None = Field(default=None, ge=0, le=10000)
     exhaust_location: str | None = None
     carbon_filter: bool | None = None
     intake_type: str | None = None
@@ -120,6 +122,8 @@ class GrowUpdate(_LocationFields):
     light_leak_controlled: bool | None = None
     exhaust_type: str | None = None
     exhaust_cfm: int | None = None
+    # Potência elétrica do exaustor (W), para o aviso de carga dos relés do Hub
+    exhaust_watts: int | None = Field(default=None, ge=0, le=10000)
     exhaust_location: str | None = None
     exhaust_power_pct: int | None = Field(
         default=None, ge=0, le=100, multiple_of=5,
@@ -247,6 +251,7 @@ class GrowResponse(BaseModel):
     light_leak_controlled: bool | None
     exhaust_type: str | None
     exhaust_cfm: int | None
+    exhaust_watts: int | None = None
     exhaust_location: str | None
     # Registro da potencia ajustada no controlador (nao e comando); horario gravado pelo servidor
     exhaust_power_pct: int | None = None

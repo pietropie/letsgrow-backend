@@ -26,13 +26,13 @@ from app.models.base import Base
 from app.models.grow import Grow
 from app.models.plant import Plant
 from app.models.pot import Pot
-from app.models.sensor import HubClaimCode, SensorDevice
+from app.models.sensor import HubClaimCode, HubRelay, SensorDevice, SensorModel
 from app.models.user import User
 from app.services import mqtt_broker, rate_limit
 from app.services.auth import get_current_user
 
 TABLES = [User.__table__, Grow.__table__, Pot.__table__, Plant.__table__, SensorDevice.__table__,
-          HubClaimCode.__table__]
+          HubClaimCode.__table__, HubRelay.__table__, SensorModel.__table__]
 MAC = "A4CF12AB34CD"
 
 

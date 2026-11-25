@@ -143,10 +143,13 @@ async def upsert_hub_client(mac: str, grow_id: uuid.UUID | str, password: str) -
     logger.info("Usuário MQTT do Hub %s criado/atualizado (grow %s)", mac, grow_id)
 
 
-async def publish_json(topic: str, payload: dict, qos: int = 1) -> None:
+async def publish_json(topic: str, payload: dict | None, qos: int = 1, retain: bool = False) -> None:
+    """Publica JSON. `payload=None` com retain=True apaga a mensagem retida do tópico."""
+    body = b"" if payload is None else json.dumps(payload)
+
     async def run() -> None:
         async with _client() as client:
-            await client.publish(topic, json.dumps(payload), qos=qos)
+            await client.publish(topic, body, qos=qos, retain=retain)
 
     try:
         await asyncio.wait_for(run(), TIMEOUT_S)
@@ -157,3 +160,17 @@ async def publish_json(topic: str, payload: dict, qos: int = 1) -> None:
 
 async def publish_hub_command(grow_id: uuid.UUID | str, hub_mac: str, payload: dict) -> None:
     await publish_json(hub_command_topic(grow_id, hub_mac), payload, qos=1)
+
+
+def hub_relay_config_topic(grow_id: uuid.UUID | str, mac: str) -> str:
+    return f"letsgrow/{grow_id}/LG-{mac}/relay/config"
+
+
+async def publish_relay_config(grow_id: uuid.UUID | str, hub_mac: str, payload: dict) -> None:
+    """Configuração dos relés, retida: o Hub recebe sozinho a cada conexão."""
+    await publish_json(hub_relay_config_topic(grow_id, hub_mac), payload, qos=1, retain=True)
+
+
+async def clear_relay_config(grow_id: uuid.UUID | str, hub_mac: str) -> None:
+    """Apaga a configuração retida (Hub mudou de ambiente ou foi removido)."""
+    await publish_json(hub_relay_config_topic(grow_id, hub_mac), None, qos=1, retain=True)
